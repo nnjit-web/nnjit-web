@@ -35,8 +35,8 @@ conda install -c conda-forge clang=11.0 lld=11.0
 # On Windows, e.g.,
 set(USE_VULKAN D:/VulkanSDK/1.3.224.1)
 
-# Disable Binaryen.
-set(USE_BINARYEN OFF)
+# Enable Binaryen.
+set(USE_BINARYEN ON)
 ```
 
 ### Step 1-2: Git Initilization
@@ -129,7 +129,7 @@ nnjit-web/
       bart.onnx
       gpt2-10.onnx
       roberta.onnx
-      vit.onnx
+      t5-small-encoder.onnx
 ```
 
 ## Step 2-5: Run a script to JIT optimize kernel for models
@@ -139,11 +139,11 @@ In `web` directory, you should (1) modify the `EMSDK_HOME` in the file `tools\te
 On Windows:
 
 ```shell
-call tools\test_nnjit_for_models.bat dell-g5-5090
+call tools\test_nnjit_for_models.bat dell-g5-5090 [roberta | bart | gpt-2 | t5-encoder] [wasm | webgpu] [tvm | nnjit]
 ```
 
 On Linux:
 
 ```shell
-bash tools/test_nnjit_for_models.sh dell-g5-5090
+bash tools/test_nnjit_for_models.sh dell-g5-5090 [roberta | bart | gpt-2 | t5-encoder] [wasm | webgpu] [tvm | nnjit]
 ```

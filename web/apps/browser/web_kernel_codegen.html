@@ -1,0 +1,211 @@
+<html>
+  <!--- Licensed to the Apache Software Foundation (ASF) under one -->
+  <!--- or more contributor license agreements.  See the NOTICE file -->
+  <!--- distributed with this work for additional information -->
+  <!--- regarding copyright ownership.  The ASF licenses this file -->
+  <!--- to you under the Apache License, Version 2.0 (the -->
+  <!--- "License"); you may not use this file except in compliance -->
+  <!--- with the License.  You may obtain a copy of the License at -->
+
+  <!---   http://www.apache.org/licenses/LICENSE-2.0 -->
+
+  <!--- Unless required by applicable law or agreed to in writing, -->
+  <!--- software distributed under the License is distributed on an -->
+  <!--- "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY -->
+  <!--- KIND, either express or implied.  See the License for the -->
+  <!--- specific language governing permissions and limitations -->
+  <!--- under the License. -->
+
+  <head>
+    <title>NNJIT Page</title>
+  </head>
+  <script src="tvmjs_runtime.wasi.js"></script>
+  <script src="tvmjs.bundle.js"></script>
+  <script>
+    function customLog(message) {
+      console.log(message);
+      const d = document.createElement("div");
+      d.innerHTML = message;
+      const node = document.getElementById("log");
+      if (node.childElementCount > 1000) {
+        clearLog();
+      }
+      node.appendChild(d);
+    };
+    function clearLog() {
+      const node = document.getElementById("log");
+      while (node.hasChildNodes()) {
+        node.removeChild(node.lastChild);
+      }
+    }
+    function normalizeKey(key) {
+      key = key.trim();
+      key = key.replaceAll(" ", "-");
+      key = key.toLowerCase();
+      return key;
+    }
+    function connectRPC() {
+      const proxyUrl = document.getElementById("proxyURL").value;
+      const key = normalizeKey(document.getElementById("proxyKey").value);
+      document.getElementById("proxyKey").value = key;
+      // store key.
+      localStorage.setItem("proxyKey", key);
+      // only works for once.
+      let getImports = () => {
+        return new EmccWASI();
+      };
+      if (key.includes("nowasi")) {
+        getImports = () => {
+          return {};
+        };
+      }
+      new tvmjs.RPCServer(proxyUrl, key, getImports, customLog);
+    }
+    function getCurrentURL() {
+      return window.location.href;
+    }
+    function actModelCodegen(action, showMsgBox, showConfBox) {
+      if (showConfBox) {
+        if (!confirm("Are you sure?")) {
+          return;
+        }
+      }
+      const xhr = new XMLHttpRequest();
+      const codegenUrl = getCurrentURL() + "codegen";
+      xhr.open("POST", codegenUrl);
+      const body = JSON.stringify({
+        action: action,
+        key: document.getElementById("proxyKey").value,
+        model: document.getElementById("models").value,
+        backend: document.getElementById("backends").value,
+        engine: document.getElementById("engines").value,
+      });
+      //xhr.responseType = "json";
+      xhr.onload = () => {
+        if (xhr.readyState == 4 && xhr.status == 200) {
+          const data = xhr.response;
+          console.log(data);
+          if (showMsgBox) {
+            alert(data);
+          }
+        } else {
+          console.log("Error: ${xhr.status}");
+        }
+      };
+      xhr.send(body);
+      setTimeout(queryAndShowModelCodegenStatus, 2000);
+    }
+    function startModelCodegen() {
+      actModelCodegen("start", true, false);
+    }
+    function pauseModelCodegen() {
+      actModelCodegen("pause", true, false);
+    }
+    function stopModelCodegen() {
+      actModelCodegen("stop", true, true);
+    }
+    function queryModelCodegen() {
+      actModelCodegen("query", true, false);
+    }
+    function queryAndShowModelCodegenStatus() {
+      const xhr = new XMLHttpRequest();
+      const codegenUrl = getCurrentURL() + "codegen";
+      xhr.open("POST", codegenUrl);
+      const body = JSON.stringify({
+        action: "query",
+        key: document.getElementById("proxyKey").value,
+      });
+      //xhr.responseType = "json";
+      xhr.onload = () => {
+        if (xhr.readyState == 4 && xhr.status == 200) {
+          const data = xhr.response;
+          console.log(data);
+          document.getElementById("status").innerHTML = "Status: " + data;
+        } else {
+          console.log("Error: ${xhr.status}");
+        }
+      };
+      xhr.send(body);
+    }
+  </script>
+  <body>
+    <h1>Web Kernel Codegen Page</h1>
+    To use this page
+    <ul>
+      <li>Input your device name as RPC Server Key, e.g. "honor-magicbook-16".</li>
+      <li>Click "Connect To Proxy" button.</li>
+      <li>Click "Start" button.</li>
+    </ul>
+
+    <h2>Options</h2>
+    Proxy URL: <input
+      name="proxyurl"
+      id="proxyURL"
+      type="text"
+      readonly="readonly"
+      value="wss://localhost:8888/ws"
+    /><br />
+    RPC Server Key: <input
+      name="serverkey"
+      id="proxyKey"
+      type="text"
+      value="wasm"
+    /><br />
+    <button onclick="connectRPC()">Connect To Proxy</button>
+
+    <!-- <h2>Model Codegen Test</h2>
+
+    <label for="models">DL model:</label>
+    <select id="models" name="models">
+      <option value="all">All</option>
+      <option value="roberta">RoBERTa</option>
+      <option value="bart">BART</option>
+      <option value="gpt-2">GPT-2</option>
+      <option value="vit">ViT</option>
+      <option value="vgg-16">VGG-16</option>
+    </select>
+    <label for="backends">Backend:</label>
+    <select id="backends" name="backends">
+      <option value="all">All</option>
+      <option value="wasm">WASM</option>
+      <option value="webgpu">WebGPU</option>
+    </select>
+    <label for="engines">Engine:</label>
+    <select id="engines" name="engines">
+      <option value="tvm">TVM</option>
+      <option value="online">Online</option>
+    </select>
+    <br/>
+    <button onclick="startModelCodegen()">Start/Continue</button>
+    <button onclick="pauseModelCodegen()">Pause</button>
+    <button onclick="stopModelCodegen()">Stop</button>
+    <button onclick="queryModelCodegen()">Query</button>
+    <div id="status">Status: STOPPED</div> -->
+    
+    <h2>Log</h2>
+
+    <button onclick="clearLog()">Clear Log</button>
+    <div id="log"></div>
+    <canvas id="canvas" width="224" height="224"></canvas>
+  </body>
+  <script>
+    function httpsUrlToWssUrl() {
+      const httpsUrl = window.location.href;
+      const terms = httpsUrl.split("/");
+      return "wss://" + terms[2] + "/ws"
+    }
+    
+    const proxyUrlInput = document.getElementById("proxyURL");
+    proxyUrlInput.value = httpsUrlToWssUrl();
+
+    const proxyKey = localStorage.getItem("proxyKey");
+    if (proxyKey) {
+      const proxyKeyInput = document.getElementById("proxyKey");
+      proxyKeyInput.value = proxyKey;
+    }
+
+    if (proxyKey != "" || proxyKey != "wasm") {
+      connectRPC();
+    }
+  </script>
+</html>
