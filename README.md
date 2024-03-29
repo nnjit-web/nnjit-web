@@ -60,7 +60,7 @@ On Linux:
 bash ./tools/build.sh
 ```
 
-## 2. NNJIT kernel generation
+## 2. NNJIT kernel optimization
 
 ## Step 2-0: Install requirements for nnjit-web
 
