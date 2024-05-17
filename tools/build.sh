@@ -2,6 +2,7 @@
 
 export CC=gcc
 export CXX=g++
+export BINARIEN_SDK=$(pwd)/3rdparty/binaryen
 
 prepare() {
   mkdir -p build
@@ -24,7 +25,7 @@ prepareForRebuild() {
 build() {
   cd build
   cmake ..
-  make -j12
+  make
   cd ..
 }
 

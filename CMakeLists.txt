@@ -13,6 +13,7 @@ include(cmake/utils/FindLLVM.cmake)
 include(cmake/utils/FindROCM.cmake)
 include(cmake/utils/FindRCCL.cmake)
 include(cmake/utils/FindEthosN.cmake)
+include(cmake/utils/FindBinaryen.cmake)
 
 if(EXISTS ${CMAKE_BINARY_DIR}/config.cmake)
   include(${CMAKE_BINARY_DIR}/config.cmake)
@@ -33,6 +34,7 @@ tvm_option(USE_OPENCL "Build with OpenCL" OFF)
 tvm_option(USE_OPENCL_ENABLE_HOST_PTR "Enable OpenCL memory object access to host" OFF)
 tvm_option(USE_OPENCL_GTEST "Path to OpenCL specific gtest version for runtime cpp tests." /path/to/opencl/gtest)
 tvm_option(USE_VULKAN "Build with Vulkan" OFF)
+tvm_option(USE_BINARYEN "Build with Binaryen" OFF)
 
 
 # Whether to use spirv-tools.and SPIRV-Headers from Khronos github or gitlab.
@@ -92,6 +94,7 @@ tvm_option(DMLC_PATH "Path to DMLC" "3rdparty/dmlc-core/include")
 tvm_option(RANG_PATH "Path to RANG" "3rdparty/rang/include")
 tvm_option(COMPILER_RT_PATH "Path to COMPILER-RT" "3rdparty/compiler-rt")
 tvm_option(PICOJSON_PATH "Path to PicoJSON" "3rdparty/picojson")
+tvm_option(BINARYEN_PATH "Path to Binaryen" "3rdparty/binaryen")
 
 # Contrib library options
 tvm_option(USE_BYODT_POSIT "Build with BYODT software emulated posit custom datatype" OFF)
@@ -141,6 +144,7 @@ include_directories(SYSTEM ${DMLC_PATH})
 include_directories(SYSTEM ${RANG_PATH})
 include_directories(SYSTEM ${COMPILER_RT_PATH})
 include_directories(SYSTEM ${PICOJSON_PATH})
+include_directories(SYSTEM ${BINARYEN_PATH})
 
 # initial variables
 set(TVM_LINKER_LIBS "")
@@ -558,6 +562,7 @@ include(cmake/modules/Metal.cmake)
 include(cmake/modules/ROCM.cmake)
 include(cmake/modules/LLVM.cmake)
 include(cmake/modules/Micro.cmake)
+include(cmake/modules/Binaryen.cmake)
 include(cmake/modules/contrib/EthosN.cmake)
 include(cmake/modules/contrib/CMSISNN.cmake)
 include(cmake/modules/contrib/EthosU.cmake)
