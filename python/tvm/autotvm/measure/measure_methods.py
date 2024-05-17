@@ -40,7 +40,7 @@ import tvm.ir.transform
 from tvm import nd
 from tvm import rpc as _rpc
 from tvm.autotvm.env import AutotvmGlobalScope, reset_global_scope
-from tvm.contrib import ndk, stackvm, tar
+from tvm.contrib import ndk, stackvm, tar, emcc, wasm
 from tvm.contrib.popen_pool import PopenPoolExecutor
 from tvm.driver import build
 from tvm.error import TVMError
@@ -112,6 +112,10 @@ class LocalBuilder(Builder):
                 build_func = ndk.create_shared
             elif build_func == "stackvm":
                 build_func = stackvm.build
+            elif build_func == "emscripten":
+                build_func = emcc.create_tvmjs_wasm
+            elif build_func == "wasm":
+                build_func = wasm.create_wasm
             else:
                 raise ValueError("Invalid build_func" + build_func)
         self.build_func = _WrappedBuildFunc(build_func, runtime)

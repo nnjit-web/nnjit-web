@@ -221,6 +221,9 @@ def build(
     ----
     See the note on :any:`tvm.target` on target string format.
     """
+    target = Target.current() if target is None else target
+    if str(target).startswith("wasm"):
+        name = "1622"
     if isinstance(inputs, te.Schedule):
         if args is None:
             raise ValueError("args must be given for build from schedule")
