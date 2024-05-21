@@ -476,6 +476,11 @@ def _build_func_common(measure_input, runtime=None, checks=None, build_option=No
     """Common part for building a configuration"""
     target, task, config = measure_input
     target, task.target_host = Target.canon_target_and_host(target, task.target_host)
+    if target.kind.name == "wasm" or target.kind.name == "webgpu":
+        from .verify import verify_kernel_hw_occu
+        is_verified = verify_kernel_hw_occu(target.kind.name, task, config.get_flatten_feature())
+        if not is_verified:
+            raise ValueError("Not verified kernel hardware occupancy")
     checks = checks or {}
     with target:
         s, args = task.instantiate(config)
