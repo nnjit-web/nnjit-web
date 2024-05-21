@@ -528,12 +528,15 @@ def dense_strategy_cpu(attrs, inputs, out_type, target):
     same_type = inputs[0].dtype == inputs[1].dtype == out_type.dtype
     dtype = inputs[0].dtype
     u8s8s32 = dtype == "uint8" and inputs[1].dtype == "int8" and out_type.dtype == "int32"
+    # NOTE(fucheng): Disable nopack due to bad performance on web.
+    '''
     strategy.add_implementation(
         wrap_compute_dense(topi.x86.dense_nopack),
         wrap_topi_schedule(topi.x86.schedule_dense_nopack),
         name="dense_nopack.x86",
         plevel=5,
     )
+    '''
 
     strategy.add_implementation(
         wrap_compute_dense(topi.x86.dense_pack),

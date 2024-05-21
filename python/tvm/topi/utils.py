@@ -526,3 +526,47 @@ def is_target(names):
 def is_dynamic_shape(shape):
     """Checks if any part of a shape is dynamic"""
     return any([isinstance(x, (Any, SizeVar)) for x in shape])
+
+
+def build_2d_tile_sizes(sizes):
+    out_2d_sizes = []
+    for s in sizes:
+        out_2d_sizes.append([-1, s])
+    return out_2d_sizes
+
+
+def build_3d_tile_sizes(out_sizes, in_sizes):
+    out_3d_sizes = []
+    for osize in out_sizes:
+        for isize in in_sizes:
+            if osize % isize != 0:
+                continue
+            out_3d_sizes.append([-1, osize // isize, isize])
+    return out_3d_sizes
+
+
+def build_antares_3d_tile_sizes(sizes):
+    out_2d_sizes = []
+    for s in sizes:
+        out_2d_sizes.append([-1, 1, s])
+    return out_2d_sizes
+
+
+def build_antares_cpu_4d_tile_sizes(out_sizes, in_sizes):
+    out_3d_sizes = []
+    for osize in out_sizes:
+        for isize in in_sizes:
+            if osize % isize != 0:
+                continue
+            out_3d_sizes.append([-1, 1, osize // isize, isize])
+    return out_3d_sizes
+
+
+def build_antares_gpu_4d_tile_sizes(out_sizes, in_sizes):
+    out_3d_sizes = []
+    for osize in out_sizes:
+        for isize in in_sizes:
+            if osize % isize != 0:
+                continue
+            out_3d_sizes.append([-1, isize, osize // isize, 1])
+    return out_3d_sizes

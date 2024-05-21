@@ -155,6 +155,40 @@ def batch_matmul(
         else:
             _, _, N = get_const_tuple(tensor_b.shape)
         _default_batch_matmul_config(cfg, M, N, K)
+    import os
+    from ..utils import build_2d_tile_sizes, build_3d_tile_sizes
+    space_name = os.getenv("TVM_TUNING_SPACE_NAME")
+    if space_name is None or space_name == "default":
+        cfg.define_split("tile_y", M, num_outputs=2)
+        cfg.define_split("tile_x", N, num_outputs=2)
+        cfg.define_split("tile_k", K, num_outputs=2)
+    elif space_name == "large":
+        cfg.define_split("tile_y", M, num_outputs=2)
+        cfg.define_split("tile_x", N, num_outputs=2, filter=lambda x: x.size[-1] == 4)
+        cfg.define_split("tile_k", K, num_outputs=2)
+    elif space_name == "small":
+        mb_cadidates = [4, 8, 16, 32, 64, 128, 256]
+        kb_cadidates = [4, 8, 16, 32, 64, 128, 256]
+        nb_cadidates = [4, 8, 16, 32, 64, 128, 256]
+        mr_cadidates = [4, 8, 16, 32]
+        nr_cadidates = [4, 8, 16, 32]
+        tile_y_sizes = build_3d_tile_sizes(mb_cadidates, mr_cadidates)
+        tile_x_sizes = build_3d_tile_sizes(nb_cadidates, nr_cadidates)
+        tile_k_sizes = build_2d_tile_sizes(kb_cadidates)
+        cfg.define_split(
+            "tile_y", M,
+            policy="candidate", num_outputs=3, candidate=tile_y_sizes
+        )
+        cfg.define_split(
+            "tile_x", N,
+            policy="candidate", num_outputs=3, candidate=tile_x_sizes
+        )
+        cfg.define_split(
+            "tile_k", K,
+            policy="candidate", num_outputs=2, candidate=tile_k_sizes
+        )
+    else:
+        raise ValueError("Unsupported space name: " + space_name)
     return nn.batch_matmul(
         tensor_a,
         tensor_b,
@@ -185,8 +219,8 @@ def schedule_batch_matmul(cfg, outs):
     s = te.create_schedule([x.op for x in outs])
 
     def _callback(op):
-        if "batch_matmul" in op.tag:
-            C = op.output(0)
+        def default_schedule(C):
+            #C = op.output(0)
             A, B = op.input_tensors
             if len(B.op.input_tensors) == 1 and B.op.input_tensors[0] == A:
                 s[B].compute_inline()
@@ -202,9 +236,9 @@ def schedule_batch_matmul(cfg, outs):
             CC = s.cache_write(C, "global")
 
             # create tuning space
-            cfg.define_split("tile_y", M, num_outputs=2)
-            cfg.define_split("tile_x", N, num_outputs=2)
-            cfg.define_split("tile_k", K, num_outputs=2)
+            #cfg.define_split("tile_y", M, num_outputs=2)
+            #cfg.define_split("tile_x", N, num_outputs=2)
+            #cfg.define_split("tile_k", K, num_outputs=2)
 
             b, y, x = s[O].op.axis
             yo, yi = cfg["tile_y"].apply(s, O, y)
@@ -223,6 +257,51 @@ def schedule_batch_matmul(cfg, outs):
             s[Crf].fuse(y, x)
             s[Crf].vectorize(s[Crf].op.axis[0])
             s[O].pragma(bxyo, "auto_unroll_max_step", 16)
+
+        def web_schedule(C):
+            A, B = s[C].op.input_tensors
+            if len(B.op.input_tensors) == 1 and B.op.input_tensors[0] == A:
+                s[B].compute_inline()
+            _, M, K = get_const_tuple(A.shape)
+            _, _, N = get_const_tuple(C.shape)
+
+            if op not in s.outputs:
+                s[C].compute_inline()
+                O = outs[0]
+            else:
+                O = C
+
+            CC = s.cache_write(C, "local")
+
+            b, y, x = s[O].op.axis
+            (k,) = s[CC].op.reduce_axis
+
+            yt, yo, yi = cfg["tile_y"].apply(s, O, y)
+            xt, xo, xi = cfg["tile_x"].apply(s, O, x)
+            ko, ki = cfg["tile_k"].apply(s, CC, k)
+            
+            xio, xii = s[O].split(xi, 4)
+            s[O].reorder(yt, xt, yo, xo, yi, xio, xii)
+            s[O].vectorize(xii)
+            s[O].pragma(yi, "auto_unroll_max_step", 256)
+
+            s[CC].compute_at(s[O], xo)
+
+            _, yi, xi = s[CC].op.axis
+            xio, xii = s[CC].split(xi, 4)
+            s[CC].reorder(ko, ki, yi, xio, xii)
+            s[CC].vectorize(xii)
+            s[CC].pragma(yi, "auto_unroll_max_step", 256)
+
+        if "batch_matmul" in op.tag:
+            C = op.output(0)
+
+        import os
+        space_name = os.getenv("TVM_TUNING_SPACE_NAME")
+        if space_name is None or space_name == "default" or cfg.is_fallback:
+            default_schedule(C)
+        elif space_name == "small":
+            web_schedule(C)
 
     traverse_inline(s, outs[0].op, _callback)
     return s

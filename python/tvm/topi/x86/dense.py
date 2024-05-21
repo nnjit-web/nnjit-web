@@ -36,48 +36,128 @@ from .tensor_intrin import (
 
 
 def _schedule_dense_pack_template(cfg, s, C, O):
-    A, packedB = s[C].op.input_tensors
+    import os
+    space_name = os.getenv("TVM_TUNING_SPACE_NAME")
+    if space_name is None or space_name == "default":
+        schedule_type = "default"
+    elif space_name == "large" or space_name == "small":
+        schedule_type = "web"
 
-    CC = s.cache_write(C, "global")
-    y, x = s[C].op.axis
-    (k,) = s[CC].op.reduce_axis
+    if schedule_type == "default":
+        A, packedB = s[C].op.input_tensors
 
-    yt, yo, yi = cfg["tile_y"].apply(s, C, y)
-    xt, xo, xi = cfg["tile_x"].apply(s, C, x)
-    s[C].reorder(xt, yt, yo, xo, yi, xi)
-    xyt = s[C].fuse(xt, yt)
-    if C == O:
-        s[C].parallel(xyt)
-    xyo = s[C].fuse(yo, xo)
-    s[C].unroll(yi)
-    s[C].vectorize(xi)
+        CC = s.cache_write(C, "global")
+        y, x = s[C].op.axis
+        (k,) = s[CC].op.reduce_axis
 
-    s[CC].compute_at(s[C], xyo)
-    y, x = s[CC].op.axis
-    ko, ki = cfg["tile_k"].apply(s, CC, k)
-    s[CC].reorder(ko, ki, y, x)
-    s[CC].vectorize(x)
+        yt, yo, yi = cfg["tile_y"].apply(s, C, y)
+        xt, xo, xi = cfg["tile_x"].apply(s, C, x)
+        s[C].reorder(xt, yt, yo, xo, yi, xi)
+        xyt = s[C].fuse(xt, yt)
+        if C == O:
+            s[C].parallel(xyt)
+        xyo = s[C].fuse(yo, xo)
+        s[C].unroll(yi)
+        s[C].vectorize(xi)
 
-    tile_inner = cfg["tile_inner"].size[-1]
-    if tile_inner > 1:
-        yo, yi = s[CC].split(y, tile_inner)
-        s[CC].reorder(ko, yo, ki, yi, x)
-        s[CC].unroll(yo)
-        s[CC].unroll(ki)
-        s[CC].unroll(yi)
-    else:
-        s[CC].unroll(ki)
-        s[CC].unroll(y)
+        s[CC].compute_at(s[C], xyo)
+        y, x = s[CC].op.axis
+        ko, ki = cfg["tile_k"].apply(s, CC, k)
+        s[CC].reorder(ko, ki, y, x)
+        s[CC].vectorize(x)
 
-    if C != O:
-        y, x = s[O].op.axis
-        yt, yo, yi = cfg["tile_y"].apply(s, O, y)
-        xt, xo, xi = cfg["tile_x"].apply(s, O, x)
-        s[O].reorder(xt, yt, yo, xo, yi, xi)
-        xyt = s[O].fuse(xt, yt)
-        s[C].compute_at(s[O], xyt)
-        s[O].vectorize(xi)
-        s[O].parallel(xyt)
+        tile_inner = cfg["tile_inner"].size[-1]
+        if tile_inner > 1:
+            yo, yi = s[CC].split(y, tile_inner)
+            s[CC].reorder(ko, yo, ki, yi, x)
+            s[CC].unroll(yo)
+            s[CC].unroll(ki)
+            s[CC].unroll(yi)
+        else:
+            s[CC].unroll(ki)
+            s[CC].unroll(y)
+
+        if C != O:
+            y, x = s[O].op.axis
+            yt, yo, yi = cfg["tile_y"].apply(s, O, y)
+            xt, xo, xi = cfg["tile_x"].apply(s, O, x)
+            s[O].reorder(xt, yt, yo, xo, yi, xi)
+            xyt = s[O].fuse(xt, yt)
+            s[C].compute_at(s[O], xyt)
+            s[O].vectorize(xi)
+            s[O].parallel(xyt)
+    elif schedule_type == "web":
+        do_fuse = False
+        do_cache_write = True
+
+        if do_cache_write:
+            CC = s.cache_write(C, "local")
+            (k,) = s[CC].op.reduce_axis
+        else:
+            (k,) = s[C].op.reduce_axis
+
+        y, x = s[C].op.axis
+
+        if space_name == "large":
+            yt, yo, yi = cfg["tile_y"].apply(s, C, y)
+            xt, xo, xi = cfg["tile_x"].apply(s, C, x)
+            ko, ki = cfg["tile_k"].apply(s, CC, k)
+            tile_inner = cfg["tile_inner"].size[-1]
+            do_vectorize = cfg["tile_x"].size[-1] % 4 == 0
+        elif space_name == "small":
+            tile_inner = 1
+            do_vectorize = cfg["tile_x"].size[-1] % 4 == 0
+            yt, yo, yi = cfg["tile_y"].apply(s, C, y)
+            xt, xo, xi = cfg["tile_x"].apply(s, C, x)
+            if do_cache_write:
+                ko, ki = cfg["tile_k"].apply(s, CC, k)
+            else:
+                ko, ki = cfg["tile_k"].apply(s, C, k)
+
+        if do_vectorize:
+            xio, xii = s[C].split(xi, 4)
+            if do_cache_write:
+                s[C].reorder(yt, xt, yo, xo, yi, xio, xii)
+            else:
+                s[C].reorder(yt, xt, ko, yo, xo, ki, yi, xio, xii)
+                s[C].unroll(ki)
+            if do_fuse:
+                xyt = s[C].fuse(xt, yt)
+                xyo = s[C].fuse(yo, xo)
+            s[C].vectorize(xii)
+        else:
+            s[C].reorder(yt, xt, yo, xo, yi, xi)
+            if do_fuse:
+                xyt = s[C].fuse(xt, yt)
+                xyo = s[C].fuse(yo, xo)
+        s[C].pragma(yi, "auto_unroll_max_step", 256)
+
+        if do_fuse:
+            s[CC].compute_at(s[C], xyo)
+        else:
+            if do_cache_write:
+                s[CC].compute_at(s[C], xo)
+
+        if do_cache_write:
+            y, x = s[CC].op.axis
+            
+            if do_vectorize:
+                xo, xi = s[CC].split(x, 4)
+                s[CC].reorder(ko, ki, y, xo, xi)
+                s[CC].vectorize(xi)
+            else:
+                s[CC].reorder(ko, ki, y, x)
+
+        if do_cache_write:
+            s[CC].pragma(y, "auto_unroll_max_step", 256)
+
+        if C != O:
+            y, x = s[O].op.axis
+            xo, xi = s[O].split(x, 4)
+            xoo, xoi = s[O].split(xo, 4)
+            s[O].vectorize(xi)
+            s[O].unroll(xoi)
+
     return s
 
 
@@ -222,21 +302,62 @@ def dense_pack(cfg, data, weight, bias=None, out_dtype=None):
     else:
         N, _ = get_const_tuple(weight.shape)  # out_dim
     # create tuning space
-    cfg.define_split(
-        "tile_y", 32 if isinstance(M, (tvm.tir.Var, tvm.tir.Any)) else M, num_outputs=3
-    )
-    cfg.define_split(
-        "tile_x", 32 if isinstance(N, (tvm.tir.Var, tvm.tir.Any)) else N, num_outputs=3
-    )
-    cfg.define_split(
-        "tile_k", 32 if isinstance(K, (tvm.tir.Var, tvm.tir.Any)) else K, num_outputs=2
-    )
-    cfg.define_split(
-        "tile_inner",
-        32 if isinstance(M, (tvm.tir.Var, tvm.tir.Any)) else M,
-        num_outputs=2,
-        filter=lambda y: y.size[-1] <= 16,
-    )
+    import os
+    from ..utils import build_2d_tile_sizes, build_3d_tile_sizes
+    space_name = os.getenv("TVM_TUNING_SPACE_NAME")
+    if space_name is None or space_name == "default" or space_name == "large":
+        cfg.define_split(
+            "tile_y", 32 if isinstance(M, (tvm.tir.Var, tvm.tir.Any)) else M, num_outputs=3
+        )
+        if space_name == "default":
+            cfg.define_split(
+                "tile_x", 32 if isinstance(N, (tvm.tir.Var, tvm.tir.Any)) else N, num_outputs=3
+            )
+        else:
+            cfg.define_split(
+                "tile_x", 32 if isinstance(N, (tvm.tir.Var, tvm.tir.Any)) else N, num_outputs=3,
+                filter=lambda x: x.size[-1] == 4
+            )
+        cfg.define_split(
+            "tile_k", 32 if isinstance(K, (tvm.tir.Var, tvm.tir.Any)) else K, num_outputs=2
+        )
+        if space_name == "default":
+            cfg.define_split(
+                "tile_inner",
+                32 if isinstance(M, (tvm.tir.Var, tvm.tir.Any)) else M,
+                num_outputs=2,
+                filter=lambda y: y.size[-1] <= 16,
+            )
+        else:
+            cfg.define_split(
+                "tile_inner",
+                32 if isinstance(M, (tvm.tir.Var, tvm.tir.Any)) else M,
+                num_outputs=2,
+                filter=lambda y: y.size[-1] == 1,
+            )
+    elif space_name == "small":
+        mb_cadidates = [4, 8, 16, 32, 64, 128, 256]
+        kb_cadidates = [2]
+        nb_cadidates = [4, 8, 16, 32, 64, 128, 256]
+        mr_cadidates = [4, 8, 16, 32]
+        nr_cadidates = [4, 8, 16, 32]
+        tile_y_sizes = build_3d_tile_sizes(mb_cadidates, mr_cadidates)
+        tile_x_sizes = build_3d_tile_sizes(nb_cadidates, nr_cadidates)
+        tile_k_sizes = build_2d_tile_sizes(kb_cadidates)
+        cfg.define_split(
+            "tile_y", 32 if isinstance(M, (tvm.tir.Var, tvm.tir.Any)) else M,
+            policy="candidate", num_outputs=3, candidate=tile_y_sizes
+        )
+        cfg.define_split(
+            "tile_x", 32 if isinstance(N, (tvm.tir.Var, tvm.tir.Any)) else N,
+            policy="candidate", num_outputs=3, candidate=tile_x_sizes
+        )
+        cfg.define_split(
+            "tile_k", 32 if isinstance(K, (tvm.tir.Var, tvm.tir.Any)) else K,
+            policy="candidate", num_outputs=2, candidate=tile_k_sizes
+        )
+    else:
+        raise ValueError("Unsupported space name: " + space_name)
     if cfg.is_fallback:
         _default_dense_pack_config(cfg, M, N, K)
 
