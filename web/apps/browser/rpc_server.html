@@ -85,13 +85,24 @@
         }
       } catch (err) {}
     }
+
+    function httpsUrlToWssUrl() {
+      const httpsUrl = window.location.href;
+      const terms = httpsUrl.split("/");
+      return "wss://" + terms[2] + "/ws"
+    }
+
+    window.addEventListener("DOMContentLoaded", (event) => {
+      const proxyUrlInput = document.getElementById("proxyUrl");
+      proxyUrlInput.value = httpsUrlToWssUrl();
+    });
   </script>
-<script src="https://code.jquery.com/jquery-3.6.3.min.js" integrity="sha256-pvPw+upLPUjgMXY0G+8O0xUf+/Im1MZjXxxgOcBQBXU=" crossorigin="anonymous"></script>
-<script>
-  $(function(){
-    $("#includeRPCPlugin").load("rpc_plugin.html");
-  });
-</script>
+  <script src="https://code.jquery.com/jquery-3.6.3.min.js" integrity="sha256-pvPw+upLPUjgMXY0G+8O0xUf+/Im1MZjXxxgOcBQBXU=" crossorigin="anonymous"></script>
+  <script>
+    $(function(){
+      $("#includeRPCPlugin").load("rpc_plugin.html");
+    });
+  </script>
   <body onload="loadCacheOption()">
     <h1>TVM WebSocket RPC Server</h1>
     To use this page
@@ -109,7 +120,7 @@
       name="proxyrl"
       id="proxyUrl"
       type="text"
-      value="ws://localhost:8888/ws"
+      value="wss://localhost:8888/ws"
     /><br />
     RPC Server Key <input
       name="serverkey"

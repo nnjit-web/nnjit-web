@@ -254,6 +254,8 @@ class ProxyServerHandler(object):
         tracker_addr,
         index_page=None,
         resource_files=None,
+        certfile=None,
+        keyfile=None,
     ):
         assert ProxyServerHandler.current is None
         ProxyServerHandler.current = self
@@ -276,7 +278,14 @@ class ProxyServerHandler(object):
                 handlers.append(pair)
                 logging.info(pair)
             self.app = tornado.web.Application(handlers)
-            self.app.listen(web_port)
+            if certfile is not None and keyfile is not None:
+                self.https_server = tornado.httpserver.HTTPServer(
+                    self.app,
+                    ssl_options={"certfile": certfile, "keyfile": keyfile},
+                )
+                self.https_server.listen(web_port)
+            else:
+                self.app.listen(web_port)
 
         self.sock = sock
         self.sock.setblocking(0)
@@ -487,6 +496,8 @@ def _proxy_server(
     tracker_addr,
     index_page,
     resource_files,
+    certfile,
+    keyfile,
 ):
     asyncio.set_event_loop(asyncio.new_event_loop())
     handler = ProxyServerHandler(
@@ -498,6 +509,8 @@ def _proxy_server(
         tracker_addr,
         index_page,
         resource_files,
+        certfile,
+        keyfile,
     )
     handler.run()
 
@@ -518,6 +531,8 @@ class PopenProxyServerState(object):
         tracker_addr=None,
         index_page=None,
         resource_files=None,
+        certfile=None,
+        keyfile=None,
     ):
 
         sock = socket.socket(base.get_addr_family((host, port)), socket.SOCK_STREAM)
@@ -546,6 +561,8 @@ class PopenProxyServerState(object):
                 tracker_addr,
                 index_page,
                 resource_files,
+                certfile,
+                keyfile,
             ),
         )
         # start the server in a different thread
@@ -563,6 +580,8 @@ def _popen_start_proxy_server(
     tracker_addr=None,
     index_page=None,
     resource_files=None,
+    certfile=None,
+    keyfile=None,
 ):
     # This is a function that will be sent to the
     # Popen worker to run on a separate process.
@@ -577,6 +596,8 @@ def _popen_start_proxy_server(
         tracker_addr,
         index_page,
         resource_files,
+        certfile,
+        keyfile,
     )
     PopenProxyServerState.current = state
     # returns the port so that the main can get the port number.
@@ -630,6 +651,8 @@ class Proxy(object):
         tracker_addr=None,
         index_page=None,
         resource_files=None,
+        certfile=None,
+        keyfile=None,
     ):
         self.proc = PopenWorker()
         # send the function
@@ -645,6 +668,8 @@ class Proxy(object):
                 tracker_addr,
                 index_page,
                 resource_files,
+                certfile,
+                keyfile,
             ],
         )
         # receive the port

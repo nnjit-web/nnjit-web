@@ -82,6 +82,8 @@ def main(args):
             index_page=index,
             resource_files=js_files,
             tracker_addr=tracker_addr,
+            certfile=args.certfile,
+            keyfile=args.keyfile,
         )
     else:
         prox = Proxy(
@@ -106,6 +108,8 @@ if __name__ == "__main__":
         "--example-rpc", type=bool, default=False, help="Whether to switch on example rpc mode"
     )
     parser.add_argument("--tracker", type=str, default="", help="Report to RPC tracker")
+    parser.add_argument("--certfile", type=str, default=None, help="SSL Certification file")
+    parser.add_argument("--keyfile", type=str, default=None, help="SSL Key file")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
     main(args)
