@@ -20,6 +20,7 @@ import { assert } from "./support";
 import { Pointer } from "./ctypes";
 import { Memory } from "./memory";
 import { Disposable } from "./types";
+import { getPerformance } from "./compact";
 
 /** A pointer to points to the raw address space. */
 export type GPUPointer = number;
@@ -338,6 +339,13 @@ export interface FunctionInfo {
   launch_param_tags: Array<string>;
 }
 
+enum ShaderModuleCompilationStatus {
+  "none",
+  "compiling",
+  "failed",
+  "successful"
+}
+
 /**
  * WebGPU context
  * Manages all the webgpu resources here.
@@ -345,6 +353,9 @@ export interface FunctionInfo {
 export class WebGPUContext {
   device: GPUDevice;
   memory: Memory;
+  pipeline: GPUComputePipeline | undefined;
+  timeQuerySet: any;
+  logger: (msg: string) => void;
   // internal data
   private bufferTable: Array<GPUBuffer | undefined> = [undefined];
   private bufferTableFreeId: Array<number> = [];
@@ -367,9 +378,131 @@ export class WebGPUContext {
   // log and sync each step
   protected debugLogFinish = false;
 
+  private shaderNames: Array<string> = [];
+  private shaderFuncMap: Map<string, Function> = new Map();
+  private isProfilingSupportedFlag = false;
+  private enableProfilingFlag = false;
+  private numQueryCount = 128;
+  private curTimeQueryIdx: GPUSize32 = 0;
+  private timestampBufferSize: number = -1;
+  private timestampBufferIdx: number = -1;
+  private timestampOutBufferIdx: number = -1;
+
+  private compilationStartTime: number = 0;
+  private compilationStatus: ShaderModuleCompilationStatus = ShaderModuleCompilationStatus.none;
+  private compilationInfo: string = "";
+
   constructor(memory: Memory, device: GPUDevice) {
     this.memory = memory;
     this.device = device;
+    this.pipeline = undefined;
+    try {
+      this.timeQuerySet = this.device.createQuerySet({
+          type: "timestamp", count: this.numQueryCount});
+      this.isProfilingSupportedFlag = true;
+    } catch (err) {
+      this.timeQuerySet = undefined;
+      this.isProfilingSupportedFlag = false;
+    }
+    this.logger = console.log;
+    this.log("supportTimestampQuerySet " + this.isProfilingSupportedFlag);
+  }
+
+  isProfilingSupported() {
+    return this.isProfilingSupportedFlag;
+  }
+
+  enableProfiling() {
+    if (this.isProfilingSupportedFlag == true) {
+      this.enableProfilingFlag = true;
+      this.initTimeQuery();
+    }
+  }
+
+  disbaleProfiling() {
+    if (this.isProfilingSupportedFlag == true) {
+      this.enableProfilingFlag = false;
+    }
+  }
+
+  isProfilingEnabled() {
+    return this.isProfilingSupportedFlag && this.enableProfilingFlag;
+  }
+
+  initTimeQuery() {
+    if (this.isProfilingEnabled() == false) {
+      return;
+    }
+    this.curTimeQueryIdx = 0;
+    this.timestampBufferSize = this.numQueryCount * 8 + 8 * 8;
+    if (this.timestampBufferIdx < 0) {
+      this.timestampBufferIdx = this.deviceAllocDataSpaceForQueryResolve(this.timestampBufferSize);
+      this.timestampOutBufferIdx = this.deviceAllocDataSpaceForQueryResolveResult(this.timestampBufferSize);
+    }
+  }
+
+  resetTimeQuery() {
+    if (this.isProfilingEnabled() == false) {
+      return;
+    }
+    this.curTimeQueryIdx = 0;
+  }
+
+  async resolveQuerySet() {
+    const timeQueryCount = this.curTimeQueryIdx;
+    const commandEncoder = this.device.createCommandEncoder();
+    for (let i = 0; i < timeQueryCount; i += 32) {
+      commandEncoder.resolveQuerySet(
+          this.timeQuerySet,
+          i,
+          32,
+          this.gpuBufferFromPtr(this.timestampBufferIdx),
+          (i / 32) * 256);
+    }
+    const command = commandEncoder.finish();
+    this.device.queue.submit([command]);
+    this.deviceCopyWithinGPU(
+        this.timestampBufferIdx, 0,
+        this.timestampOutBufferIdx, 0,
+        this.timestampBufferSize);
+    await this.sync();
+  }
+
+  async getTimeCostArray(unit: String, outArr: Array<number>)  {
+    if (this.isProfilingEnabled() == false) {
+      return;
+    }
+    if (this.timestampBufferIdx >= 0) {
+      await this.resolveQuerySet();
+      const timestampBuffer = this.gpuBufferFromPtr(this.timestampOutBufferIdx);
+      await timestampBuffer.mapAsync(GPUMapMode.READ);
+      const cpuTemp = timestampBuffer.getMappedRange();
+      const viewU64 = new BigUint64Array(cpuTemp);
+
+      for (let i = 0; i < this.curTimeQueryIdx; i += 2) {
+        const durationNs = viewU64[i + 1] - viewU64[i];
+        let speed = Number(durationNs);
+        if (unit == "s") {
+          speed = speed / 1e9;
+        } else if (unit == "ms") {
+          speed = speed / 1e6;
+        } else if (unit == "us") {
+          speed = speed / 1e3;
+        }
+
+        outArr.push(speed);
+      }
+
+      timestampBuffer.unmap();
+    }
+  }
+
+  private log(msg: string): void {
+    this.logger("WebGPUContext: " + msg);
+  }
+
+  getShaderNames(): Array<string> {
+    return this.shaderNames;
   }
 
   /**
@@ -546,7 +679,6 @@ export class WebGPUContext {
       }
     }
 
-
     const layoutEntries: Array<GPUBindGroupLayoutEntry> = [];
     const bufferArgIndices: Array<number> = [];
     const podArgIndices: Array<number> = [];
@@ -596,7 +728,17 @@ export class WebGPUContext {
         }
 
         const commandEncoder = this.device.createCommandEncoder();
-        const compute = commandEncoder.beginComputePass();
+        let passDescriptor: GPUComputePassDescriptor = undefined;
+        if (this.isProfilingEnabled()) {
+          if (this.curTimeQueryIdx < this.numQueryCount) {
+            passDescriptor = {timestampWrites: {
+                querySet: this.timeQuerySet,
+                beginningOfPassWriteIndex: this.curTimeQueryIdx,
+                endOfPassWriteIndex: this.curTimeQueryIdx + 1
+            }};
+          }
+        }
+        const compute = commandEncoder.beginComputePass(passDescriptor);
         compute.setPipeline(pipeline);
         const bindGroupEntries: Array<GPUBindGroupEntry> = [];
         const numBufferOrPodArgs = bufferArgIndices.length + podArgIndices.length;
@@ -678,8 +820,8 @@ export class WebGPUContext {
           entries: bindGroupEntries
         }));
 
-        compute.dispatchWorkgroups(workDim[0], workDim[1], workDim[2])
-        compute.end()
+        compute.dispatchWorkgroups(workDim[0], workDim[1], workDim[2]);
+        compute.end();
         const command = commandEncoder.finish();
         this.device.queue.submit([command]);
 
@@ -722,8 +864,38 @@ export class WebGPUContext {
           entryPoint: finfo.name
         }
       });
+      this.device.popErrorScope().then((error) => {
+        if (error) {
+          this.compilationStatus = ShaderModuleCompilationStatus.failed;
+          if (error instanceof GPUValidationError) {
+            this.log("Error: " + error.message);
+          }
+        } else {
+          this.compilationStatus = ShaderModuleCompilationStatus.successful;
+        }
+      });
       return createShaderFunc(pipeline);
     }
+  }
+
+  executeAfterCompilation(callbackForSuccess: Function, callbackForFail: Function): void {
+    new Promise(resolve => {setTimeout(resolve, 1000)}).then(() => {
+      const perf = getPerformance();
+      const durationMs = perf.now() - this.compilationStartTime;
+      const timeout = 60 * 1000;
+      if (this.compilationStatus == ShaderModuleCompilationStatus.compiling && durationMs <= timeout) {
+        this.log("Compiling: " + this.compilationInfo);
+        this.executeAfterCompilation(callbackForSuccess, callbackForFail);
+      } else {
+        if (this.compilationStatus == ShaderModuleCompilationStatus.successful) {
+          this.log("Compilation success: " + this.compilationInfo);
+          callbackForSuccess();
+        } else {
+          this.log("Compilation failed: " + this.compilationInfo);
+          callbackForFail();
+        }
+      }
+    });
   }
 
   /**
@@ -790,6 +962,22 @@ export class WebGPUContext {
     }
     const ptr = this.attachToBufferTable(buffer);
     return ptr;
+  }
+
+  private deviceAllocDataSpaceForQueryResolve(nbytes: number): GPUPointer {
+    const buffer = this.device.createBuffer({
+      size: nbytes,
+      usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.QUERY_RESOLVE,
+    });
+    return this.attachToBufferTable(buffer);
+  }
+
+  private deviceAllocDataSpaceForQueryResolveResult(nbytes: number): GPUPointer {
+    const buffer = this.device.createBuffer({
+      size: nbytes,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
+    return this.attachToBufferTable(buffer);
   }
 
   private deviceFreeDataSpace(ptr: GPUPointer): void {

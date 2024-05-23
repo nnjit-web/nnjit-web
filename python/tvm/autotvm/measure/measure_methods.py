@@ -651,46 +651,84 @@ def run_through_rpc(
     try:
         # upload built module
         with module_loader(remote_kwargs, build_result) as (remote, mod):
-            dev = remote.device(str(measure_input.target), 0)
+            if "wasm" in str(measure_input.target) or measure_input.target.kind.name == "webgpu":
+                dev = remote.device(str(measure_input.target), 0)
 
-            # Limitation:
-            # We can not get PackFunction directly in the remote mode as it is wrapped
-            # under the std::function. We could lift the restriction later once we fold
-            # the PackedFunc as an object. Currently, we pass function name to work
-            # around it.
-            f_prepare = "cache_flush_cpu_non_first_arg" if enable_cpu_cache_flush else ""
-            time_f = mod.time_evaluator(
-                mod.entry_name,
-                dev,
-                number=number,
-                repeat=repeat,
-                min_repeat_ms=min_repeat_ms,
-                f_preproc=f_prepare,
-            )
+                if ref_input:
+                    args = [nd.array(x, device=dev) for x in ref_input]
+                else:
+                    args = [nd.empty(x[0], x[1], dev) for x in build_result.arg_info]
+                    dev.sync()
 
-            if ref_input:
-                args = [nd.array(x, device=dev) for x in ref_input]
+                fname = "default_function"
+                
+                if measure_input.target.kind.name == "webgpu":
+                    ftimeexec = remote.get_function("__sync.wasm.TimeExecutionForWebGPU")
+                    fiswebgpufinished = remote.get_function("__sync.wasm.isTimeExecutionForWebGPUFinished")
+                    fgetwebgpuresults = remote.get_function("__sync.wasm.getTimeExecutionForWebGPUResults")
+                    
+                    ftimeexec(fname, dev, number, *args)
+                    while fiswebgpufinished() == 0:
+                        time.sleep(1)
+                    cost_bytes = fgetwebgpuresults()
+                else:
+                    ftimeexec = remote.get_function("__sync.wasm.TimeExecutionForWasm")
+                    cost_bytes = ftimeexec(fname,
+                                           dev,
+                                           number,
+                                           repeat,
+                                           min_repeat_ms,
+                                           10,
+                                           cooldown_interval,
+                                           10,
+                                           *args)
+
+                import numpy as np
+                cost_arr = np.frombuffer(cost_bytes, dtype=np.dtype("<f8"))
+                costs = tuple(cost_arr.tolist())
             else:
-                try:
-                    random_fill = remote.get_function("tvm.contrib.random.random_fill")
-                except AttributeError:
-                    raise AttributeError(
-                        "Please make sure USE_RANDOM is ON in the config.cmake "
-                        "on the remote devices"
-                    )
-                args = [nd.empty(x[0], x[1], dev) for x in build_result.arg_info]
-                if "scatter" not in measure_input.task.name:
-                    # the index tensor of scatter op cannot be randomly initialized
-                    for arg in args:
-                        random_fill(arg)
-                dev.sync()
+                dev = remote.device(str(measure_input.target), 0)
 
-            costs = time_f(*args).results
+                # Limitation:
+                # We can not get PackFunction directly in the remote mode as it is wrapped
+                # under the std::function. We could lift the restriction later once we fold
+                # the PackedFunc as an object. Currently, we pass function name to work
+                # around it.
+                f_prepare = "cache_flush_cpu_non_first_arg" if enable_cpu_cache_flush else ""
+                time_f = mod.time_evaluator(
+                    mod.entry_name,
+                    dev,
+                    number=number,
+                    repeat=repeat,
+                    min_repeat_ms=min_repeat_ms,
+                    f_preproc=f_prepare,
+                )
+
+                if ref_input:
+                    args = [nd.array(x, device=dev) for x in ref_input]
+                else:
+                    try:
+                        random_fill = remote.get_function("tvm.contrib.random.random_fill")
+                    except AttributeError:
+                        raise AttributeError(
+                            "Please make sure USE_RANDOM is ON in the config.cmake "
+                            "on the remote devices"
+                        )
+                    args = [nd.empty(x[0], x[1], dev) for x in build_result.arg_info]
+                    if "scatter" not in measure_input.task.name:
+                        # the index tensor of scatter op cannot be randomly initialized
+                        for arg in args:
+                            random_fill(arg)
+                    dev.sync()
+
+                costs = time_f(*args).results
 
         if len(costs) > 2:  # remove largest and smallest value to reduce variance
             costs = list(costs)
             costs.sort()
             costs = tuple(costs[1:-1])
+        if np.mean(np.array(costs)) == 0.0:
+            costs = (1e9)
     except TVMError as exc:
         msg = str(exc)
         if "Stack trace returned" in msg:
@@ -725,6 +763,36 @@ class DefaultModuleLoader:
             remote.remove(build_result.filename)
             remote.remove(os.path.splitext(build_result.filename)[0] + ".so")
             remote.remove("")
+
+
+class WasmModuleLoader:
+    def __init__(self, pre_load_function=None) -> None:
+        #print("measure_methods.py: Create WasmModuleLoader")
+        self.pre_load_function = pre_load_function
+
+    @contextlib.contextmanager
+    def __call__(self, remote_kwargs, build_result):
+        if self.pre_load_function is not None:
+            self.pre_load_function(remote, build_result)
+
+        wasm_path = build_result.filename
+
+        wasm_binary = open(wasm_path, "rb").read()
+        from tvm import rpc
+        proxy_host = "127.0.0.1"
+        proxy_port = os.getenv("PROXY_PORT")
+        proxy_port = 9090 if proxy_port is None else int(proxy_port)
+        key = os.getenv("PROXY_KEY")
+        key = "wasm" if key is None else key
+        session_timeout = 10
+        remote = rpc.connect(
+            proxy_host,
+            proxy_port,
+            key=key,
+            session_timeout=session_timeout,
+            session_constructor_args=["rpc.WasmSession", wasm_binary],
+        )
+        yield remote, remote
 
 
 def default_module_loader(pre_load_function=None):

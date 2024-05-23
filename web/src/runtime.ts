@@ -1014,6 +1014,8 @@ export class Instance implements Disposable {
   private asyncifyHandler: AsyncifyHandler;
   private initProgressCallback: Array<InitProgressCallback> = [];
   private rng: LinearCongruentialGenerator;
+  private isTimeEvalFinished: number;
+  private timeEvalResults: any[];
 
   /**
    * Internal function(registered by the runtime)
@@ -1067,6 +1069,9 @@ export class Instance implements Disposable {
     this.registerEnvGlobalPackedFuncs();
     this.registerObjectFactoryFuncs();
     this.rng = new LinearCongruentialGenerator();
+    this.isTimeEvalFinished = 0;
+    this.timeEvalResults = [];
+    this.registerEnvGlobalPackedFuncs();
   }
 
   /**
@@ -2026,6 +2031,17 @@ export class Instance implements Disposable {
     this.registerFunc("__async." + name, asyncVariant, override);
   }
 
+  registerSyncServerFunc(
+    name: string,
+    func: Function,
+    override = false
+  ): void {
+    const asyncVariant = (...args: Array<any>): void => {
+      return func(...args);
+    };
+    this.registerFunc("__sync." + name, asyncVariant, override);
+  }
+
   /**
    * Asynchronously load webgpu pipelines when possible.
    * @param mod The input module.
@@ -2192,8 +2208,146 @@ export class Instance implements Disposable {
       return x + 1;
     };
 
+    const timeExecutionForWasm = (...args: Array<any>): Uint8Array => {
+      const fname = args[0];
+      const dev = args[1];
+      const nstep = args[2];
+      const repeat = args[3];
+      const minRepeatMs = args[4];
+      const limitZeroTimeIterations = args[5];
+      const cooldownIntervalMs = args[6];
+      const repeatsToCooldown = args[7];
+      const fargs = args.slice(8, args.length);
+
+      const finvoke = this.systemLib().getFunction(fname);
+
+      dev.sync();
+      const result = [];
+      let setupNumber: number = nstep;
+
+      for (let i = 0; i < repeat; ++i) {
+        let durationMs = 0.0;
+        let absoluteZeroTimes = 0;
+        do {
+          if (durationMs > 0.0) {
+            let golden_ratio = 1.618;
+            setupNumber = Math.floor(
+              Math.max(minRepeatMs / (durationMs / setupNumber) + 1, setupNumber * golden_ratio)
+            );
+          }
+          const tstart: number = perf.now();
+          for (let j = 0; j < nstep; ++j) {
+            finvoke(...fargs);
+          }
+          dev.sync();
+          const tend: number = perf.now();
+
+          durationMs = tend - tstart;
+          if (durationMs == 0) {
+            absoluteZeroTimes++;
+          }
+        } while (durationMs < minRepeatMs && absoluteZeroTimes < limitZeroTimeIterations);
+        const speed = durationMs / setupNumber / 1000;
+        result.push(speed);
+      }
+      const ret = new Float64Array(result.length);
+      ret.set(result);
+      return new Uint8Array(ret.buffer);
+    }
+
+    const isTimeExecutionForWebGPUFinished = (): number => {
+      return this.isTimeEvalFinished;
+    };
+
+    const getTimeExecutionForWebGPUResults = (): Uint8Array => {
+      const ret = new Float64Array(this.timeEvalResults.length);
+      ret.set(this.timeEvalResults);
+      return new Uint8Array(ret.buffer);
+    };
+
+    const registerWebGPUKernelFunc = (...args: Array<any>) => {
+      for (let i = 0; i < 10; i ++) {
+        try {
+          const fname = args[0];
+          const kernel_fname = fname + "_kernel" + i;
+          const fkernel = this.systemLib().getFunction(kernel_fname);
+          this.registerFunc(kernel_fname, fkernel);
+        } catch (err) {
+          // Do nothing.
+        }
+      }
+    };
+
+    const timeExecutionForWebGPU = (...args: Array<any>) => {
+      const fname = args[0];
+      const dev = args[1];
+      const repeat = args[2];
+      const fargs = args.slice(3, args.length);
+
+      const finvoke = this.systemLib().getFunction(fname);
+
+      registerWebGPUKernelFunc(fname);
+
+      this.isTimeEvalFinished = 0;
+      this.timeEvalResults = [];
+
+      const callbackForSuccess: Function = () => {
+        let tstart: number = 0;
+        if (this.lib.webGPUContext?.isProfilingSupported()) {
+          this.lib.webGPUContext?.resetTimeQuery();
+        }
+        
+        tstart = perf.now();
+
+        for (let i = 0; i < repeat; ++i) {
+          finvoke(...fargs);
+        }
+
+        new Promise(resolve => {setTimeout(resolve, 1000)}).then(() => {
+          dev.sync().then(() => {
+            if (this.lib.webGPUContext?.isProfilingSupported()) {
+              this.lib.webGPUContext?.getTimeCostArray("s", this.timeEvalResults).then(() => {
+                const tend: number = perf.now();
+                const durationMs = tend - tstart;
+                console.log("Instance: sync " + durationMs + " ms");
+                if (this.timeEvalResults.length == 0) {
+                  this.timeEvalResults.push(1e10);
+                }
+                this.isTimeEvalFinished = 1;
+              });
+            } else {
+              const tend: number = perf.now();
+              const durationMs = tend - tstart;
+              console.log("Instance: sync " + durationMs + " ms");
+              const speed = durationMs / repeat / 1000;
+              this.timeEvalResults.push(speed);
+              this.isTimeEvalFinished = 1;
+            }
+          }).catch((error: DOMException) => {
+            console.log("Instance: error " + error.message);
+            this.timeEvalResults.push(1e10);
+            this.isTimeEvalFinished = 1;
+            // reload page in order to re-connect GPU.
+            location.reload();
+          });
+        });
+      };
+
+      const callbackForFail: Function = () => {
+        this.timeEvalResults.push(1e10);
+        this.isTimeEvalFinished = 1;
+      };
+
+      this.lib.webGPUContext?.executeAfterCompilation(callbackForSuccess, callbackForFail);
+    };
+
     this.registerAsyncServerFunc("wasm.TimeExecution", timeExecution);
     this.registerAsyncServerFunc("testing.asyncAddOne", addOne);
+    this.registerSyncServerFunc("wasm.TimeExecutionForWasm", timeExecutionForWasm);
+    this.registerSyncServerFunc("wasm.isTimeExecutionForWebGPUFinished", isTimeExecutionForWebGPUFinished);
+    this.registerSyncServerFunc("wasm.getTimeExecutionForWebGPUResults", getTimeExecutionForWebGPUResults);
+    this.registerSyncServerFunc("wasm.TimeExecutionForWebGPU", timeExecutionForWebGPU);
+    this.registerSyncServerFunc("wasm.registerWebGPUKernelFunc", registerWebGPUKernelFunc);
   }
 
   private createPackedFuncFromCFunc(
