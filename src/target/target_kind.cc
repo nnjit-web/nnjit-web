@@ -306,6 +306,9 @@ TVM_REGISTER_TARGET_KIND("c", kDLCPU)
     .set_default_keys({"cpu"})
     .set_target_parser(tvm::target::parsers::cpu::ParseTarget);
 
+TVM_REGISTER_TARGET_KIND("wasm", kDLCPU)
+    .set_default_keys({"cpu"});
+
 TVM_REGISTER_TARGET_KIND("cuda", kDLCUDA)
     .add_attr_option<String>("mcpu")
     .add_attr_option<String>("arch")
