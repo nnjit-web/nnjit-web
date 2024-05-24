@@ -338,7 +338,7 @@ def schedule_batch_matmul(cfg, outs):
             space_name = os.getenv("TVM_TUNING_SPACE_NAME")
             if space_name is None or space_name in ["default", "large"]:
                 default_schedule(cfg, op)
-            elif space_name == "web":
+            elif space_name == "small":
                 #antares_cpu_web_schedule(cfg, op)
                 antares_gpu_web_schedule(cfg, op)
 

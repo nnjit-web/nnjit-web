@@ -145,15 +145,15 @@ def batch_matmul(
     output : tvm.te.Tensor
         3-D with shape [batch, M, N]
     """
+    if transpose_a:
+        _, K, M = get_const_tuple(tensor_a.shape)
+    else:
+        _, M, K = get_const_tuple(tensor_a.shape)
+    if transpose_b:
+        _, N, _ = get_const_tuple(tensor_b.shape)
+    else:
+        _, _, N = get_const_tuple(tensor_b.shape)
     if cfg.is_fallback:
-        if transpose_a:
-            _, K, M = get_const_tuple(tensor_a.shape)
-        else:
-            _, M, K = get_const_tuple(tensor_a.shape)
-        if transpose_b:
-            _, N, _ = get_const_tuple(tensor_b.shape)
-        else:
-            _, _, N = get_const_tuple(tensor_b.shape)
         _default_batch_matmul_config(cfg, M, N, K)
     import os
     from ..utils import build_2d_tile_sizes, build_3d_tile_sizes
