@@ -167,3 +167,19 @@ YOCTO_EXP10 = -24
 def format_si_prefix(x, si_prefix):
     exp10 = 10 ** (SI_PREFIXES.index(si_prefix) * 3 + YOCTO_EXP10)
     return float(x) / exp10
+
+
+def get_os_env_var_bool(var_name, default_var):
+    import os
+    var = os.getenv(var_name)
+    if var is None:
+        return default_var
+    return True if var == "1" else False
+
+
+def get_os_env_var_int(var_name, default_var):
+    import os
+    var = os.getenv(var_name)
+    if var is None:
+        return int(default_var)
+    return int(var)

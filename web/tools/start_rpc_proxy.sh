@@ -2,6 +2,8 @@
 
 export MY_HOME=${HOME}
 export PROXY_USE_SSL=1
+export PROXY_WEB_PORT=8888
+export PROXY_PORT=9090
 
 importTvm() {
     if [ "$TVM_HOME" == "" ];then

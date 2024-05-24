@@ -25,7 +25,7 @@ prepareForRebuild() {
 build() {
     cd build
     cmake ..
-    make -j12
+    make
     cd ..
 }
 

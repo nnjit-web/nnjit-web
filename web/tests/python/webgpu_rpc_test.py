@@ -48,12 +48,15 @@ def test_rpc():
     sch.bind(i0, "blockIdx.x")
     sch.bind(i1, "threadIdx.x")
 
+    print("Build ...")
     fadd = tvm.build(sch.mod, target=target, runtime=runtime)
     temp = utils.tempdir()
 
+    print("Export library ...")
     wasm_path = temp.relpath("addone_gpu.wasm")
     fadd.export_library(wasm_path, fcompile=tvmjs.create_tvmjs_wasm)
 
+    print("RPC connect ...")
     wasm_binary = open(wasm_path, "rb").read()
     remote = rpc.connect(
         proxy_host,
@@ -74,9 +77,35 @@ def test_rpc():
         addone = f1.get_function("main")
         addone(a, b)
         np.testing.assert_allclose(b.numpy(), np.log(np.abs(a.numpy()) + 1), atol=1e-5, rtol=1e-5)
-        print("Test pass..")
+        print("Test pass!")
 
-    check(remote, 71821 * 32)
+    def check_v2(remote, size):
+        import time
+        import numpy as np
+
+        ftimeexec = remote.get_function("__sync.wasm.TimeExecutionForWebGPU")
+        fiswebgpufinished = remote.get_function("__sync.wasm.isTimeExecutionForWebGPUFinished")
+        fgetwebgpuresults = remote.get_function("__sync.wasm.getTimeExecutionForWebGPUResults")
+
+        fname = "main"
+        dev = remote.webgpu(0)
+        number = 32
+        adata = np.random.uniform(size=size).astype(A.dtype)
+        a = tvm.nd.array(adata, dev)
+        b = tvm.nd.array(np.zeros(size, dtype=A.dtype), dev)
+        args = [a, b]
+        ftimeexec(fname, dev, number, *args)
+        while fiswebgpufinished() == 0:
+           time.sleep(1)
+        cost_bytes = fgetwebgpuresults()
+        cost_arr = np.frombuffer(cost_bytes, dtype=np.dtype("<f8"))
+        costs = tuple(cost_arr.tolist())
+        print(f"costs: {costs}")
+        print("Test pass!")
+
+    print("Test ...")
+    #check(remote, 71821 * 32)
+    check_v2(remote, 71821 * 32)
 
 
 test_rpc()

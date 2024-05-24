@@ -528,6 +528,35 @@ def is_dynamic_shape(shape):
     return any([isinstance(x, (Any, SizeVar)) for x in shape])
 
 
+def get_os_env_var_bool(var_name, default_var):
+    import os
+    var = os.getenv(var_name)
+    if var is None:
+        return default_var
+    return True if var == "1" else False
+
+
+def get_os_env_var_int(var_name, default_var):
+    import os
+    var = os.getenv(var_name)
+    if var is None:
+        return int(default_var)
+    return int(var)
+
+
+def get_os_env_var_int_list(var_name, default_var):
+    import os
+    var = os.getenv(var_name)
+    if var is None:
+        return []
+    
+    vars = var.split(",")
+    int_vars = []
+    for v in vars:
+        int_vars.append(int(v))
+    return int_vars
+
+
 def build_2d_tile_sizes(sizes):
     out_2d_sizes = []
     for s in sizes:

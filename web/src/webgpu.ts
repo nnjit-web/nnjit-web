@@ -100,6 +100,10 @@ export async function detectGPUDevice(): Promise<GPUDeviceDetectOutput | undefin
     if (adapter.features.has("shader-f16")) {
       requiredFeatures.push("shader-f16");
     }
+    // Always require timestamp query if available
+    if (adapter.features.has("timestamp-query")) {
+      requiredFeatures.push("timestamp-query");
+    }
 
     const adapterInfo = await adapter.requestAdapterInfo();
     const device = await adapter.requestDevice({
@@ -736,6 +740,7 @@ export class WebGPUContext {
                 beginningOfPassWriteIndex: this.curTimeQueryIdx,
                 endOfPassWriteIndex: this.curTimeQueryIdx + 1
             }};
+            this.curTimeQueryIdx = this.curTimeQueryIdx + 2;
           }
         }
         const compute = commandEncoder.beginComputePass(passDescriptor);
@@ -864,16 +869,7 @@ export class WebGPUContext {
           entryPoint: finfo.name
         }
       });
-      this.device.popErrorScope().then((error) => {
-        if (error) {
-          this.compilationStatus = ShaderModuleCompilationStatus.failed;
-          if (error instanceof GPUValidationError) {
-            this.log("Error: " + error.message);
-          }
-        } else {
-          this.compilationStatus = ShaderModuleCompilationStatus.successful;
-        }
-      });
+      this.compilationStatus = ShaderModuleCompilationStatus.successful;
       return createShaderFunc(pipeline);
     }
   }

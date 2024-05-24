@@ -410,6 +410,13 @@ TVM_REGISTER_TARGET_KIND("vulkan", kDLVulkan)
 
 TVM_REGISTER_TARGET_KIND("webgpu", kDLWebGPU)
     .add_attr_option<Integer>("max_num_threads", Integer(256))
+    .add_attr_option<Integer>("max_threads_per_block", Integer(256))
+    .add_attr_option<Integer>("thread_warp_size", Integer(1))
+    .add_attr_option<Integer>("max_block_size_x", Integer(256))
+    .add_attr_option<Integer>("max_block_size_y", Integer(256))
+    .add_attr_option<Integer>("max_block_size_z", Integer(64))
+    .add_attr_option<Integer>("max_shared_memory_per_block", Integer(16384))
+    .add_attr_option<Integer>("max_vector_bytes", Integer(16))
     .set_default_keys({"webgpu", "gpu"});
 
 TVM_REGISTER_TARGET_KIND("sdaccel", kDLOpenCL)  // line break

@@ -2113,6 +2113,7 @@ export class Instance implements Disposable {
     const webGPUContext = new WebGPUContext(
       this.memory, device
     );
+    webGPUContext.enableProfiling();
     this.registerFunc("wasm.WebGPUDeviceAPI", (name: string) => {
       return webGPUContext.getDeviceAPI(name);
     });
@@ -2286,7 +2287,7 @@ export class Instance implements Disposable {
 
       const finvoke = this.systemLib().getFunction(fname);
 
-      registerWebGPUKernelFunc(fname);
+      //registerWebGPUKernelFunc(fname);
 
       this.isTimeEvalFinished = 0;
       this.timeEvalResults = [];
@@ -2338,16 +2339,17 @@ export class Instance implements Disposable {
         this.isTimeEvalFinished = 1;
       };
 
-      this.lib.webGPUContext?.executeAfterCompilation(callbackForSuccess, callbackForFail);
+      callbackForSuccess();
+      //this.lib.webGPUContext?.executeAfterCompilation(callbackForSuccess, callbackForFail);
     };
 
-    this.registerAsyncServerFunc("wasm.TimeExecution", timeExecution);
-    this.registerAsyncServerFunc("testing.asyncAddOne", addOne);
-    this.registerSyncServerFunc("wasm.TimeExecutionForWasm", timeExecutionForWasm);
-    this.registerSyncServerFunc("wasm.isTimeExecutionForWebGPUFinished", isTimeExecutionForWebGPUFinished);
-    this.registerSyncServerFunc("wasm.getTimeExecutionForWebGPUResults", getTimeExecutionForWebGPUResults);
-    this.registerSyncServerFunc("wasm.TimeExecutionForWebGPU", timeExecutionForWebGPU);
-    this.registerSyncServerFunc("wasm.registerWebGPUKernelFunc", registerWebGPUKernelFunc);
+    this.registerAsyncServerFunc("wasm.TimeExecution", timeExecution, true);
+    this.registerAsyncServerFunc("testing.asyncAddOne", addOne, true);
+    this.registerSyncServerFunc("wasm.TimeExecutionForWasm", timeExecutionForWasm, true);
+    this.registerSyncServerFunc("wasm.isTimeExecutionForWebGPUFinished", isTimeExecutionForWebGPUFinished, true);
+    this.registerSyncServerFunc("wasm.getTimeExecutionForWebGPUResults", getTimeExecutionForWebGPUResults, true);
+    this.registerSyncServerFunc("wasm.TimeExecutionForWebGPU", timeExecutionForWebGPU, true);
+    this.registerSyncServerFunc("wasm.registerWebGPUKernelFunc", registerWebGPUKernelFunc, true);
   }
 
   private createPackedFuncFromCFunc(

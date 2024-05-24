@@ -302,6 +302,10 @@ class RPCRunner(Runner):
     def set_task(self, task):
         self.task = task
 
+        # NOTE(fucheng): WebGPU cannot be checked.
+        if task.target.kind.name == "webgpu":
+            return
+
         if check_remote(task.target, self.key, self.host, self.port):
             logger.info("Get devices for measurement successfully!")
         else:
@@ -476,7 +480,9 @@ def _build_func_common(measure_input, runtime=None, checks=None, build_option=No
     """Common part for building a configuration"""
     target, task, config = measure_input
     target, task.target_host = Target.canon_target_and_host(target, task.target_host)
-    if target.kind.name == "wasm" or target.kind.name == "webgpu":
+    from ..utils import get_os_env_var_bool
+    enable_hw_verification = get_os_env_var_bool("TVM_ENABLE_HW_VERYFICATION", False)
+    if enable_hw_verification and (target.kind.name == "wasm" or target.kind.name == "webgpu"):
         from .verify import verify_kernel_hw_occu
         is_verified = verify_kernel_hw_occu(target.kind.name, task, config.get_flatten_feature())
         if not is_verified:
@@ -643,6 +649,7 @@ def run_through_rpc(
     module_loader: ModuleLoader
         A function that returns a ContextManager used to establish and teardown the remote session.
     """
+    #print(f"Run through RPC")
     if isinstance(build_result, MeasureResult):
         return build_result
 
@@ -666,7 +673,7 @@ def run_through_rpc(
                     ftimeexec = remote.get_function("__sync.wasm.TimeExecutionForWebGPU")
                     fiswebgpufinished = remote.get_function("__sync.wasm.isTimeExecutionForWebGPUFinished")
                     fgetwebgpuresults = remote.get_function("__sync.wasm.getTimeExecutionForWebGPUResults")
-                    
+
                     ftimeexec(fname, dev, number, *args)
                     while fiswebgpufinished() == 0:
                         time.sleep(1)
@@ -785,6 +792,7 @@ class WasmModuleLoader:
         key = os.getenv("PROXY_KEY")
         key = "wasm" if key is None else key
         session_timeout = 10
+        #print(f"RPC connect ...")
         remote = rpc.connect(
             proxy_host,
             proxy_port,
@@ -792,6 +800,7 @@ class WasmModuleLoader:
             session_timeout=session_timeout,
             session_constructor_args=["rpc.WasmSession", wasm_binary],
         )
+        #print(f"RPC connect OK")
         yield remote, remote
 
 

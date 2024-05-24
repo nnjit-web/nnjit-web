@@ -68,8 +68,16 @@ ONNX_DEFAULT_CONFIGS = {
     # Change this flag to False to directly convert to `nn.batch_matmul`.
     # Note that `nn.batch_matmul` with format other than NT is in experimental, it may have some
     # performance issues.
-    "use_nt_batch_matmul": True
+    "use_nt_batch_matmul": True,
+    "use_dense": True
 }
+
+import os
+backend = os.getenv("BACKEND")
+if backend is not None:
+    if backend.find("webgpu") >= 0:
+        ONNX_DEFAULT_CONFIGS["use_nt_batch_matmul"] = False
+        ONNX_DEFAULT_CONFIGS["use_dense"] = False
 
 
 class onnx_input(list):
@@ -303,7 +311,7 @@ def matmul_out_dtype(inputs, out_dtype):
 
         b_type = infer_type(inputs[1])
         # Convert to dense if the second matrix is 2d and non-dynamic
-        if b_rank == 2 and not _ty.is_dynamic(b_type.checked_type):
+        if b_rank == 2 and not _ty.is_dynamic(b_type.checked_type) and ONNX_DEFAULT_CONFIGS["use_dense"]:
             a = flatten_to_nd(inputs[0], a_shape, 2)
             b = _op.transpose(inputs[1])
             output = _op.nn.dense(a, b, out_dtype=out_dtype)
@@ -376,9 +384,14 @@ def matmul_out_dtype(inputs, out_dtype):
             rhs = inputs[1]
         return _op.squeeze(_op.nn.matmul(lhs, rhs), axis=axis)
 
-    # Otherwise a simple dense op will get the job done.
-    input_1_t = _op.transpose(inputs[1], axes=(1, 0))
-    return _op.nn.dense(inputs[0], input_1_t, out_dtype=out_dtype)
+    if ONNX_DEFAULT_CONFIGS["use_dense"]:
+        # Otherwise a simple dense op will get the job done.
+        input_1_t = _op.transpose(inputs[1], axes=(1, 0))
+        return _op.nn.dense(inputs[0], input_1_t, out_dtype=out_dtype)
+    else:
+        a = _op.expand_dims(inputs[0], axis=0)
+        b = _op.expand_dims(inputs[1], axis=0)
+        return _op.squeeze(_op.nn.batch_matmul(a, b, out_dtype=out_dtype, transpose_b=False), axis=[0])
 
 
 def qmatmul(
@@ -1875,13 +1888,19 @@ class Gemm(OnnxOpConverter):
         channels = infer_channels(inputs[1], not transB)
         if transA:
             inputs[0] = _op.transpose(inputs[0], axes=(1, 0))
-        if not transB:
+        if (transB and (not ONNX_DEFAULT_CONFIGS["use_dense"])) \
+                or (not transB and ONNX_DEFAULT_CONFIGS["use_dense"]):
             inputs[1] = _op.transpose(inputs[1], axes=(1, 0))
         if len(input0_state.checked_type.shape) != 2:
             inputs[0] = _op.nn.batch_flatten(inputs[0])
         if alpha != 1.0:
             inputs[0] *= _expr.const(alpha, dtype=dtype)
-        out = _op.nn.dense(inputs[0], inputs[1], units=channels)
+        if ONNX_DEFAULT_CONFIGS["use_dense"]:
+            out = _op.nn.dense(inputs[0], inputs[1], units=channels)
+        else:
+            a = _op.expand_dims(inputs[0], axis=0)
+            b = _op.expand_dims(inputs[1], axis=0)
+            out = _op.squeeze(_op.nn.batch_matmul(a, b, transpose_b=False), axis=[0])
         if len(inputs) == 3:
             if beta != 1.0:
                 out += _expr.const(float(beta), dtype=dtype) * inputs[2]
