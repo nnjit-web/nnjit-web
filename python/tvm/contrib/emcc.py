@@ -105,3 +105,5 @@ def create_tvmjs_wasm(output, objects, options=None, cc="emcc", libs=None):
 
 
 create_tvmjs_wasm.object_format = "bc"
+
+create_tvmjs_wasm.output_format = "wasm"

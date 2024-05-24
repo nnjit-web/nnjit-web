@@ -5,28 +5,28 @@ export CXX=g++
 export BINARIEN_SDK=$(pwd)/3rdparty/binaryen
 
 prepare() {
-  mkdir -p build
+    mkdir -p build
 }
 
 cleanFiles() {
-  rm -rf build/*
+    rm -rf build/*
 }
 
 copyFiles() {
-  cp cmake/config.cmake build
+    cp cmake/config.cmake build
 }
 
 prepareForRebuild() {
-  prepare
-  #cleanFiles
-  copyFiles
+    prepare
+    cleanFiles
+    copyFiles
 }
 
 build() {
-  cd build
-  cmake ..
-  make
-  cd ..
+    cd build
+    cmake ..
+    make -j12
+    cd ..
 }
 
 prepareForRebuild
