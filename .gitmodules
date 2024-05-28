@@ -34,3 +34,6 @@
 [submodule "3rdparty/binaryen"]
 	path = 3rdparty/binaryen
 	url = https://github.com/WebAssembly/binaryen
+[submodule "3rdparty/emsdk"]
+	path = 3rdparty/emsdk
+	url = https://github.com/emscripten-core/emsdk.git

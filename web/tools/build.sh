@@ -8,8 +8,7 @@ importTvm() {
 }
 
 importAndActivateEmsdk() {
-    # Reset your EMSDK_HOME path.
-    export EMSDK_HOME=${MY_HOME}/Projects/emsdk
+    export EMSDK_HOME=$(pwd)/../3rdparty/emsdk
     ${EMSDK_HOME}/emsdk activate latest
     source ${EMSDK_HOME}/emsdk_env.sh
 }
