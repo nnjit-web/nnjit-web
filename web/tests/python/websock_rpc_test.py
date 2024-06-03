@@ -36,19 +36,28 @@ def test_rpc():
         return
     # generate the wasm library
     runtime = Runtime("cpp", {"system-lib": True})
-    target = "llvm -mtriple=wasm32-unknown-unknown-wasm"
-    if not tvm.runtime.enabled(target):
+    target = target_host = "llvm -mtriple=wasm32-unknown-unknown-wasm"
+    #target = "wasm"
+    #target_host = "llvm -mtriple=wasm32-unknown-unknown-wasm"
+    if not tvm.runtime.enabled(target_host):
         raise RuntimeError("Target %s is not enbaled" % target)
     n = te.var("n")
     A = te.placeholder((n,), name="A")
-    B = te.compute(A.shape, lambda *i: A(*i) + 1.0, name="B")
+    B = te.compute(A.shape, lambda *i: A(*i) + 1024.0, name="B")
     s = te.create_schedule(B.op)
 
-    fadd = tvm.build(s, [A, B], target, runtime=runtime, name="addone")
-    temp = utils.tempdir()
+    fadd = tvm.build(s, [A, B], target, runtime=runtime, name="default_function")
+    #temp = utils.tempdir()
+    #wasm_path = temp.relpath("addone.wasm")
+    wasm_path = "temp/addone.wasm"
+    if target.startswith("llvm"):
+        fadd.export_library(wasm_path, fcompile=tvmjs.create_tvmjs_wasm)
+    else:
+        fadd.export_library(wasm_path, fcompile=tvmjs.create_wasm)
 
-    wasm_path = temp.relpath("addone.wasm")
-    fadd.export_library(wasm_path, fcompile=tvmjs.create_tvmjs_wasm)
+    do_check = True
+    if not do_check:
+        return
 
     wasm_binary = open(wasm_path, "rb").read()
 
@@ -83,7 +92,7 @@ def test_rpc():
         time_f(a, b)
         cost = time_f(a, b).mean
         print("%g secs/op" % cost)
-        np.testing.assert_equal(b.numpy(), a.numpy() + 1)
+        np.testing.assert_equal(b.numpy(), a.numpy() + 1024)
 
     check(remote)
 

@@ -231,11 +231,15 @@ def verify_kernel_hw_occu(target_name, task, config_features):
     if get_os_env_var_bool("TVM_ENABLE_VERIFICATION_LOG", False):
         print("verify.py: task_name %s" % str(task.name))
         print("verify.py: config_features %s" % str(config_features))
+    result = False
     if "dense" in task.name:
-        return verify_dense_hw_occu(target_name, task.args, config_features)
+        result = verify_dense_hw_occu(target_name, task.args, config_features)
     elif "matmul" in task.name:
-        return verify_matmul_hw_occu(target_name, task.args, config_features)
+        result = verify_matmul_hw_occu(target_name, task.args, config_features)
     elif "conv2d" in task.name:
-        return verify_conv2d_gemm_hw_occu(target_name, task.args, config_features)
+        result = verify_conv2d_gemm_hw_occu(target_name, task.args, config_features)
     else:
         raise ValueError("Unsupport kernel: " + task.name)
+    if get_os_env_var_bool("TVM_ENABLE_VERIFICATION_LOG", False):
+        print("verify.py: result %s" % str(result))
+    return result

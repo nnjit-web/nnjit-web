@@ -298,6 +298,7 @@ class Device(ctypes.Structure):
         "test": kDLCPU,
         "hybrid": kDLCPU,
         "composite": kDLCPU,
+        "wasm": kDLCPU,
         "cuda": kDLCUDA,
         "nvptx": kDLCUDA,
         "cl": kDLOpenCL,

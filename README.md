@@ -1,53 +1,94 @@
-<!--- Licensed to the Apache Software Foundation (ASF) under one -->
-<!--- or more contributor license agreements.  See the NOTICE file -->
-<!--- distributed with this work for additional information -->
-<!--- regarding copyright ownership.  The ASF licenses this file -->
-<!--- to you under the Apache License, Version 2.0 (the -->
-<!--- "License"); you may not use this file except in compliance -->
-<!--- with the License.  You may obtain a copy of the License at -->
 
-<!---   http://www.apache.org/licenses/LICENSE-2.0 -->
+## 0. Requirements
 
-<!--- Unless required by applicable law or agreed to in writing, -->
-<!--- software distributed under the License is distributed on an -->
-<!--- "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY -->
-<!--- KIND, either express or implied.  See the License for the -->
-<!--- specific language governing permissions and limitations -->
-<!--- under the License. -->
+* Ubuntu (>=18.04 is recommended)
+* Anaconda (Python >=3.7 is recommended)
+* CMake (>=3.22.1 is recommended)
+* LLVM (11.0 is recommended)
+```shell
+conda install -c conda-forge libllvm11=11.0 lit=11.0 llvm=11.0 llvm-tools=11.0 llvmdev=11.0
+```
+* GCC (>=7.5.0 is recommended)
 
-<img src=https://raw.githubusercontent.com/apache/tvm-site/main/images/logo/tvm-logo-small.png width=128/> Open Deep Learning Compiler Stack
-==============================================
-[Documentation](https://tvm.apache.org/docs) |
-[Contributors](CONTRIBUTORS.md) |
-[Community](https://tvm.apache.org/community) |
-[Release Notes](NEWS.md)
+## 1. Build library
 
-[![Build Status](https://ci.tlcpack.ai/buildStatus/icon?job=tvm/main)](https://ci.tlcpack.ai/job/tvm/job/main/)
-[![WinMacBuild](https://github.com/apache/tvm/workflows/WinMacBuild/badge.svg)](https://github.com/apache/tvm/actions?query=workflow%3AWinMacBuild)
+### Step 1-1: Build submodules
 
-Apache TVM is a compiler stack for deep learning systems. It is designed to close the gap between the
-productivity-focused deep learning frameworks, and the performance- and efficiency-focused hardware backends.
-TVM works with deep learning frameworks to provide end to end compilation to different backends.
+```shell
+git submodule init
+git submodule update
+bash ./tools/build_binaryen.sh
+bash ./tools/build_emsdk.sh
+```
 
-License
--------
-TVM is licensed under the [Apache-2.0](LICENSE) license.
+### Step 1-2: Build TVM
 
-Getting Started
----------------
-Check out the [TVM Documentation](https://tvm.apache.org/docs/) site for installation instructions, tutorials, examples, and more.
-The [Getting Started with TVM](https://tvm.apache.org/docs/tutorial/introduction.html) tutorial is a great
-place to start.
+```shell
+bash ./tools/build.sh
+```
 
-Contribute to TVM
------------------
-TVM adopts apache committer model, we aim to create an open source project that is maintained and owned by the community.
-Check out the [Contributor Guide](https://tvm.apache.org/docs/contribute/).
+## 2. NNJIT kernel optimization
 
-Acknowledgement
----------------
-We learned a lot from the following projects when building TVM.
-- [Halide](https://github.com/halide/Halide): Part of TVM's TIR and arithmetic simplification module
-  originates from Halide. We also learned and adapted some part of lowering pipeline from Halide.
-- [Loopy](https://github.com/inducer/loopy): use of integer set analysis and its loop transformation primitives.
-- [Theano](https://github.com/Theano/Theano): the design inspiration of symbolic scan operator for recurrence.
+## Step 2-0: Install and build requirements for nnjit-web
+
+```shell
+cd ./web
+bash ./tools/install_requirements.sh
+bash ./tools/build.sh
+```
+
+## Step 2-1: Start RPC proxy for browser connection
+
+In `web` directory,
+
+```shell
+bash tools/start_rpc_proxy.sh
+```
+
+NOTE: You should keep this terminal open until all below tests finish.
+
+## Step 2-2: Open Chrominum browser and connect to RPC proxy
+
+```shell
+set SERVER_IP=127.0.0.1
+set CHROME_PATH=C:\Users\%username%\AppData\Local\Chromium\Application\chrome.exe
+
+"%CHROME_PATH%" https://%SERVER_IP%:8888/ --enable-unsafe-webgpu --enable-dawn-features=allow_unsafe_apis
+```
+
+## Step 2-3: Set RPC server key in browser according to your device name
+
+In the browser page, the default RPC server key is "wasm". It is recommended to set this key according to your device name such as "dell-g5-5090" and "hornor-magicbook-16". This key is used as a part of final JSON file name, so that we can identify which device the file belongs to.
+
+Then click the "Connect to Proxy" button, you will see the successful log as below:
+
+```shell
+WebSocketRPCServer[dell-g5-5090]: connected...
+```
+
+## Step 2-4: Download ONNX models
+
+Download four examples ONNX models from https://1drv.ms/f/s!AsM4OHFFcOSAtWHPE4DRj1QgrBTh?e=rECKZl.
+
+Then put all .onnx files to `./onnx_models` directory as follows. If the directory does not exist, you should create it by yourself.
+
+```shell
+nnjit-web/
+  web/
+    onnx_models/
+      bart.onnx
+      gpt2-10.onnx
+      roberta.onnx
+      t5-small-encoder.onnx
+```
+
+## Step 2-5: Run a script to JIT optimize kernel for models
+
+In `web` directory, you should change the device name "dell-g5-5090" below accoding to the RPC server key in your browser.
+
+
+```shell
+bash ./tools/test_nnjit_for_models.sh dell-g5-5090 [roberta | bart | gpt-2 | t5-encoder] [wasm | webgpu] [tvm | nnjit]
+```
+
+Kernel configs are saved in `logs` directory.

@@ -65,8 +65,7 @@ PackedFunc WasmModuleNode::GetFunction(const String& name,
 
 void WasmModuleNode::SaveToFile(const String& file_name, const String& format) {
   std::string fmt = runtime::GetFileFormat(file_name, format);
-  wasm::PassOptions pass_options;
-  wasm::ModuleWriter writer(pass_options);
+  wasm::ModuleWriter writer;
   if (fmt == "wasm") {
     writer.setBinary(true);
   } else if (fmt == "wat") {
@@ -91,26 +90,30 @@ String WasmModuleNode::GetSource(const String& format) {
 void WasmModuleNode::Init(const IRModule& mod, const Target& target) {
   std::unique_ptr<CodeGenWasm> cg = std::make_unique<CodeGenWasm>();
 
-  std::vector<PrimFunc> funcs;
   std::string entry_func;
   for (auto kv : mod->functions) {
     if (!kv.second->IsInstance<PrimFuncNode>()) {
+      // (@jroesch): we relax constraints here, Relay functions will just be ignored.
       DLOG(INFO) << "Can only lower IR Module with PrimFuncs, but got " << kv.second->GetTypeKey();
       continue;
     }
     auto f = Downcast<PrimFunc>(kv.second);
     auto global_symbol = f->GetAttr<String>(tvm::attr::kGlobalSymbol);
-    ICHECK(global_symbol.defined());
-    function_names_.push_back(global_symbol.value());
-    if (f->HasNonzeroAttr(tir::attr::kIsEntryFunc)) {
-      entry_func = global_symbol.value();
+    bool is_entry_func = f->HasNonzeroAttr(tir::attr::kIsEntryFunc);
+
+    ICHECK(global_symbol || !is_entry_func) << "The entry func must be exposed externally.";
+
+    if (global_symbol) {
+      function_names_.push_back(global_symbol.value());
+      if (is_entry_func) {
+        entry_func = global_symbol.value();
+      }
     }
-    funcs.push_back(f);
   }
-  
+
   try {
     cg->Init();
-    cg->AddFunctionsOrdered(funcs.begin(), funcs.end());
+    cg->AddFunctionsOrdered(mod->functions.begin(), mod->functions.end());
     if (entry_func.length() != 0) {
       cg->AddMainFunction(entry_func);
     }

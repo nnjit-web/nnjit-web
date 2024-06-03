@@ -19,7 +19,7 @@
 #include "../../tir/transforms/ir_utils.h"
 
 #define WASM_CODEGEN_BUF_TO_VAR
-//#define WASM_CODEGEN_CONST_OFFSET
+#define WASM_CODEGEN_CONST_OFFSET
 #define WASM_CODEGEN_COMBINE_INS
 
 namespace tvm {
@@ -91,6 +91,7 @@ class CodeGenWasm : public ExprFunctor<wasm::Expression*(const PrimExpr&)>,
   wasm::Expression* VisitStmt_(const LetStmtNode* op) override;
   wasm::Expression* VisitStmt_(const SeqStmtNode* op) override;
   wasm::Expression* VisitStmt_(const EvaluateNode* op) override;
+  wasm::Expression* VisitStmt_(const DeclBufferNode* op) override;
 
   wasm::Expression* CreateIntrinsic(const CallNode* op);
 
@@ -98,6 +99,8 @@ class CodeGenWasm : public ExprFunctor<wasm::Expression*(const PrimExpr&)>,
   struct StorageInfo {
     int alignment{0};
   };
+
+  std::string GetSymbolName(const GlobalVar& gvar, const PrimFunc& func);
 
   virtual int NativeVectorBits(const runtime::StorageScope& storage_scope) const;
 
@@ -214,18 +217,23 @@ class CodeGenWasm : public ExprFunctor<wasm::Expression*(const PrimExpr&)>,
 
 template <typename IterType, typename ConvType>
 void CodeGenWasm::AddFunctionsOrdered(IterType begin, IterType end, ConvType pfunc) {
-  std::vector<PrimFunc> funcs;
+  std::vector<std::tuple<GlobalVar, PrimFunc>> funcs;
   for (auto it = begin; it != end; ++it) {
-    funcs.push_back(pfunc(*it));
+    auto [gvar, func] = *it;
+    auto converted = pfunc(func);
+    funcs.push_back({gvar, Downcast<PrimFunc>(converted)});
   }
-  std::sort(funcs.begin(), funcs.end(), [](PrimFunc func_a, PrimFunc func_b) {
-    std::string name_a = func_a->GetAttr<String>(tvm::attr::kGlobalSymbol).value();
-    std::string name_b = func_b->GetAttr<String>(tvm::attr::kGlobalSymbol).value();
+  std::sort(funcs.begin(), funcs.end(), [this](const auto& pair_a, const auto& pair_b) {
+    const auto& [gvar_a, func_a] = pair_a;
+    std::string name_a = GetSymbolName(gvar_a, func_a);
+
+    const auto& [gvar_b, func_b] = pair_b;
+    std::string name_b = GetSymbolName(gvar_b, func_b);
     return name_a < name_b;
   });
-  for (auto& f : funcs) {
-    auto global_symbol = f->GetAttr<String>(tvm::attr::kGlobalSymbol);
-    AddFunction(f);
+
+  for (const auto& [gvar, func] : funcs) {
+    AddFunction(func);
   }
 }
 

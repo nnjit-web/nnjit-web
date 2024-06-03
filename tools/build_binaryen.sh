@@ -21,6 +21,8 @@ build() {
 
 cd 3rdparty/binaryen
 
-prepare
+#prepare
+
+cleanFiles
 
 build

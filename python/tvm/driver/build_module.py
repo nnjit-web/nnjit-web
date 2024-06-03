@@ -223,7 +223,7 @@ def build(
     """
     target = Target.current() if target is None else target
     if str(target).startswith("wasm"):
-        name = "1622"
+        name = "1335"
     if isinstance(inputs, te.Schedule):
         if args is None:
             raise ValueError("args must be given for build from schedule")

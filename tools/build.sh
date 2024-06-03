@@ -1,7 +1,7 @@
 #!/bin/bash
 
-export CC=gcc
-export CXX=g++
+export CC=gcc-7
+export CXX=g++-7
 export BINARIEN_SDK=$(pwd)/3rdparty/binaryen
 
 prepare() {
@@ -18,14 +18,14 @@ copyFiles() {
 
 prepareForRebuild() {
     prepare
-    cleanFiles
+    #cleanFiles
     copyFiles
 }
 
 build() {
     cd build
     cmake ..
-    make
+    make -j12
     cd ..
 }
 

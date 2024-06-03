@@ -17,7 +17,7 @@ CodeGenWasm::~CodeGenWasm() = default;
 void CodeGenWasm::Init() {
   seq_stmt_depth_ = -1;
   module_.reset(new wasm::Module());
-  
+
   DLOG(INFO) << "Load TVM wasm module";
   DLOG(INFO) << "Step 1: Load TVM wasm module file";
   const std::string tvm_wasm_module_filepath = "apps/wasm/tvm_wasm_module.wat";
@@ -28,15 +28,31 @@ void CodeGenWasm::Init() {
   DLOG(INFO) << "Step 3: Build wasm module";
   wasm::SExpressionWasmBuilder builder(*module_, *root[0], wasm::IRProfile::Normal);
   DLOG(INFO) << "TVM wasm module loaded";
-  
+
   builder_.reset(new wasm::Builder(*module_));
   analyzer_.reset(new arith::Analyzer());
   //AddWasmExportedMemory();
 }
 
+std::string CodeGenWasm::GetSymbolName(
+    const GlobalVar& gvar, const PrimFunc& func) {
+  if (auto global_symbol = func->GetAttr<String>(tvm::attr::kGlobalSymbol)) {
+    return global_symbol.value();
+  }
+
+  std::string symbol_name = [&]() {
+    std::stringstream ss;
+    ss << "_internal_";
+    ss << gvar->name_hint;
+    return ss.str();
+  }();
+
+  return symbol_name;
+}
+
 void CodeGenWasm::AddFunction(const PrimFunc& f) {
-  ICHECK_EQ(f->buffer_map.size(), 0U)
-      << "Cannot codegen function with buffer_map, please lower them first";
+  //ICHECK_EQ(f->buffer_map.size(), 0U)
+  //    << "Cannot codegen function with buffer_map, please lower them first";
 
   DLOG(INFO) << f;
 
@@ -56,15 +72,19 @@ void CodeGenWasm::AddFunction(const PrimFunc& f) {
   auto inline_sig = wasm::Signature(wasm::Type(params), wasm::Type(results));
   wasm::HeapType type(inline_sig);
 
-  stmt_body_exprs_.push_back(std::vector<wasm::Expression*>());
+  //stmt_body_exprs_.push_back(std::vector<wasm::Expression*>());
+  std::vector<wasm::Expression*> func_body_exprs;
 
   wasm::Expression* func_body_expr = this->VisitStmt(f->body);
+  //wasm::Expression* func_body_expr = builder_->makeNop();
 
-  ICHECK_EQ(stmt_body_exprs_.size(), 1);
-  stmt_body_exprs_.back().push_back(func_body_expr);
-  stmt_body_exprs_.back().push_back(builder_->makeReturn(CreateWasmInt32Const(0)));
-  std::vector<wasm::Expression*> func_body_exprs = stmt_body_exprs_.back();
-  stmt_body_exprs_.pop_back();
+  //ICHECK_EQ(stmt_body_exprs_.size(), 1);
+  //stmt_body_exprs_.back().push_back(func_body_expr);
+  //stmt_body_exprs_.back().push_back(builder_->makeReturn(CreateWasmInt32Const(0)));
+  //std::vector<wasm::Expression*> func_body_exprs = stmt_body_exprs_.back();
+  //stmt_body_exprs_.pop_back();
+  func_body_exprs.push_back(func_body_expr);
+  func_body_exprs.push_back(builder_->makeReturn(CreateWasmInt32Const(0)));
 
   for (auto v : wasm_vars_) {
     params.push_back(v.type);
@@ -74,25 +94,24 @@ void CodeGenWasm::AddFunction(const PrimFunc& f) {
   ICHECK(global_symbol.defined())
       << "CodeGenLLVM: Expect PrimFunc to have the global_symbol attribute";
   const std::string function_name(global_symbol.value().c_str());
-  function_.reset(module_->getFunctionOrNull(function_name));
-  if (function_ == nullptr) {
-    DLOG(INFO) << "Make function, name " << function_name;
-    function_ = builder_->makeFunction(
-        function_name,
-        std::move(wasm_params_),
-        type,
-        std::move(wasm_vars_));
+  wasm::Function* wasm_func = module_->getFunctionOrNull(function_name);
+  ICHECK(wasm_func == nullptr) << "WASM function existed";
+  DLOG(INFO) << "Make function, name " << function_name;
+  function_ = builder_->makeFunction(
+      function_name,
+      std::move(wasm_params_),
+      type,
+      std::move(wasm_vars_));
 
-    function_->body = builder_->makeBlock(func_body_exprs);
+  function_->body = builder_->makeBlock(func_body_exprs);
 
-    module_->addFunction(function_.release());
+  module_->addFunction(function_.release());
 
-    auto ex = std::make_unique<wasm::Export>();
-    ex->name = wasm::Name(function_name);
-    ex->value = wasm::Name(function_name);
-    ex->kind = wasm::ExternalKind::Function;
-    module_->addExport(ex.release());
-  }
+  auto ex = std::make_unique<wasm::Export>();
+  ex->name = wasm::Name(function_name);
+  ex->value = wasm::Name(function_name);
+  ex->kind = wasm::ExternalKind::Function;
+  module_->addExport(ex.release());
 }
 
 void CodeGenWasm::AddMainFunction(const std::string& entry_func_name) {
@@ -109,6 +128,14 @@ wasm::Expression* CodeGenWasm::VisitExpr_(const VarNode* op) {
 }
 
 wasm::Expression* CodeGenWasm::VisitExpr_(const CastNode* op) {
+  DataType dst_dtype = op->dtype;
+  DataType src_dtype = op->value.dtype();
+  wasm::Expression* value = MakeValue(op->value);
+  if (dst_dtype.is_int() && dst_dtype.bits() == 32) {
+    if (src_dtype.is_int() && src_dtype.bits() == 64) {
+      return builder_->makeUnary(wasm::UnaryOp::WrapInt64, value);
+    }
+  }
   LOG(FATAL) << "not implemented";
   return nullptr;
 }
@@ -909,28 +936,31 @@ wasm::Expression* CodeGenWasm::CreateSerialFor(
   wasm::Expression* init_loop_value = builder_->makeLocalSet(loop_value_index, begin);
   wasm::Expression* loop_value = builder_->makeLocalGet(loop_value_index, loop_value_type);
 
+  wasm::Expression* body_block;
+  body_block = this->VisitStmt(body);
+  /**
   stmt_body_exprs_.push_back(std::vector<wasm::Expression*>());
 
-  wasm::Expression* body_block;
   if (stmt_body_exprs_.size() <= 1000) {
     body_block = this->VisitStmt(body);
   } else {
     body_block = builder_->makeBlock(builder_->makeNop());
-  }
-  
+  } */
+
   wasm::Expression* lt = builder_->makeBinary(wasm::BinaryOp::LtSInt32, loop_value, end);
   wasm::Expression* br_if = builder_->makeBreak(wasm::Name(loop_var->name_hint.c_str()), NULL, lt);
   wasm::Expression* add_loop_value = builder_->makeLocalSet(
       loop_value_index, builder_->makeBinary(wasm::BinaryOp::AddInt32, loop_value, stride));
 
-  //std::vector<wasm::Expression*> loop_exprs = {body_block, add_loop_value, br_if};
+  std::vector<wasm::Expression*> loop_exprs = {body_block, add_loop_value, br_if};
 
+  /**
   ICHECK_GT(stmt_body_exprs_.size(), 1);
   stmt_body_exprs_.back().push_back(body_block);
   stmt_body_exprs_.back().push_back(add_loop_value);
   stmt_body_exprs_.back().push_back(br_if);
   std::vector<wasm::Expression*> loop_exprs = stmt_body_exprs_.back();
-  stmt_body_exprs_.pop_back();
+  stmt_body_exprs_.pop_back(); */
 
   DLOG(INFO) << "loop_exprs_size " << loop_exprs.size();
   
@@ -968,7 +998,7 @@ wasm::Expression* CodeGenWasm::VisitStmt_(const IfThenElseNode* op) {
     return builder_->makeNop();
   }
   if (const NENode* nen = op->condition.as<NENode>()) {
-    if (const CallNode* call = nen->a.as<CallNode>()) {
+    if (nen->a.as<CallNode>()) {
       return MakeValue(nen->a);
     }
   }
@@ -1110,6 +1140,11 @@ wasm::Expression* CodeGenWasm::VisitStmt_(const EvaluateNode* op) {
   return MakeValue(op->value);
 }
 
+wasm::Expression* CodeGenWasm::VisitStmt_(const DeclBufferNode* op) {
+  DLOG(INFO) << "Visit decl buffer node";
+  return this->VisitStmt(op->body);
+}
+
 wasm::Expression* CodeGenWasm::CreateIntrinsic(const CallNode* op) {
   DataType t = op->dtype;
   if (op->op.same_as(builtin::tvm_struct_get())) {
@@ -1134,19 +1169,26 @@ wasm::Expression* CodeGenWasm::CreateIntrinsic(const CallNode* op) {
           ptr,
           type,
           default_memory_name_);
-    } else if (kind == builtin::kTVMValueContent) {
-      ICHECK_EQ(t.lanes(), 1);
-      ICHECK(t.is_handle() || t.bits() == 64);
+    } else if (kind == builtin::kArrShape) {
       unsigned int bytes = static_cast<unsigned int>(GetTypeAllocSize(DTypeToWasmType(t)));
       bool is_signed = false;
-      //wasm::Address offset = 0;
-      wasm::Address offset = op->args[1].as<IntImmNode>()->value * 8;
+      wasm::Address offset = 5 * 4;
       unsigned int align = 0;
-      //wasm::Expression* ptr = builder_->makeBinary(
-      //    wasm::BinaryOp::AddInt32, MakeValue(op->args[0]),
-      //        builder_->makeBinary(wasm::BinaryOp::MulInt32,
-      //                              MakeValue(op->args[1]),
-      //                              CreateWasmInt32Const(8)));
+      wasm::Expression* ptr = MakeValue(op->args[0]);
+      wasm::Type type = DTypeToWasmType(t);
+      return builder_->makeLoad(
+          bytes,
+          is_signed,
+          offset,
+          align,
+          ptr,
+          type,
+          default_memory_name_);
+    } else if (kind == builtin::kArrStrides) {
+      unsigned int bytes = static_cast<unsigned int>(GetTypeAllocSize(DTypeToWasmType(t)));
+      bool is_signed = false;
+      wasm::Address offset = 6 * 4;
+      unsigned int align = 0;
       wasm::Expression* ptr = MakeValue(op->args[0]);
       wasm::Type type = DTypeToWasmType(t);
       return builder_->makeLoad(
@@ -1164,7 +1206,30 @@ wasm::Expression* CodeGenWasm::CreateIntrinsic(const CallNode* op) {
       unsigned int align = 0;
       wasm::Expression* ptr = MakeValue(op->args[0]);
       wasm::Type type = DTypeToWasmType(t);
-      
+
+      return builder_->makeLoad(
+          bytes,
+          is_signed,
+          offset,
+          align,
+          ptr,
+          type,
+          default_memory_name_);
+    } else if (kind == builtin::kTVMValueContent) {
+      ICHECK_EQ(t.lanes(), 1);
+      ICHECK(t.is_handle() || t.bits() == 64);
+      unsigned int bytes = static_cast<unsigned int>(GetTypeAllocSize(DTypeToWasmType(t)));
+      bool is_signed = false;
+      //wasm::Address offset = 0;
+      wasm::Address offset = op->args[1].as<IntImmNode>()->value * 8;
+      unsigned int align = 0;
+      //wasm::Expression* ptr = builder_->makeBinary(
+      //    wasm::BinaryOp::AddInt32, MakeValue(op->args[0]),
+      //        builder_->makeBinary(wasm::BinaryOp::MulInt32,
+      //                              MakeValue(op->args[1]),
+      //                              CreateWasmInt32Const(8)));
+      wasm::Expression* ptr = MakeValue(op->args[0]);
+      wasm::Type type = DTypeToWasmType(t);
       return builder_->makeLoad(
           bytes,
           is_signed,
@@ -1204,8 +1269,12 @@ wasm::Expression* CodeGenWasm::CreateIntrinsic(const CallNode* op) {
     wasm::Expression* then_block = MakeValue(op->args[1]);
     wasm::Expression* else_block = MakeValue(op->args[2]);
     return builder_->makeIf(cond, then_block, else_block);
+  } else if (op->op.same_as(builtin::ret())) {
+    return builder_->makeReturn(MakeValue(op->args[0]));
+  } else if (op->op.same_as(builtin::isnullptr())) {
+    return builder_->makeBinary(wasm::BinaryOp::EqInt32, MakeValue(op->args[0]), CreateWasmInt32Const(0));
   } else {
-    //LOG(FATAL) << "not implemented";
+    LOG(FATAL) << "not implemented";
     return builder_->makeNop();
   }
 }

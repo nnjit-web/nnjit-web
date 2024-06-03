@@ -37,6 +37,7 @@ import tvm
 from tvm._ffi.libinfo import find_lib_path
 
 from .emcc import create_tvmjs_wasm
+from .wasm import create_wasm
 
 
 def _convert_f32_to_bf16(value):
